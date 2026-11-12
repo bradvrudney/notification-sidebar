@@ -18,7 +18,9 @@ Run after `make install`, a logout and login, and `gnome-extensions enable notif
 
 ## Sessions
 
-- [ ] Log out and back in. Entries from before are still there, dimmed and outlined, with no buttons. Clicking one with an app opens that app; one without an app is not clickable.
+- [ ] Log out and back in, without rebooting. Entries from before are still there and are marked as from a previous session: dimmed and outlined, with no buttons. Clicking one with an app opens that app; one without an app is not clickable.
+- [ ] Disable and re-enable the extension without logging out. Entries from this login are not marked as from a previous session.
+- [ ] Leave a notification from a GTK or Flatpak app in the tray (do not dismiss it), log out and back in. GNOME restores it, and the panel shows it once, not twice; it is not marked as from a previous session while GNOME still holds it. Log out and in again and it is still there once.
 - [ ] Lock the screen, send a notification, unlock. The entry is in the panel. While locked, nothing from the extension was visible: no bell, no panel, and Super+V did nothing.
 - [ ] An entry from a previous session whose icon file no longer exists shows a sensible fallback icon, not a blank or broken one.
 
@@ -45,6 +47,7 @@ Run after `make install`, a logout and login, and `gnome-extensions enable notif
 
 ## Panel behaviour
 
+- [ ] Click the bell. The panel opens. Click the bell again. The panel closes.
 - [ ] Super+V opens and closes the panel.
 - [ ] Super+V works with Num Lock on.
 - [ ] Super+V works while another top-bar menu (for example Quick Settings) is open: that menu closes and the panel opens.

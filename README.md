@@ -54,7 +54,7 @@ Open them from the panel's menu, or with `gnome-extensions prefs notification-si
 
 ## Where history is kept
 
-History is plain text at `~/.local/share/notification-sidebar/history.json`, readable only by your user (mode 0600). It holds the app name, title and body of every notification kept, so anything that was sensitive on screen is now also on disk. Records older than the retention setting are dropped at load and once an hour, and at most 2000 records are kept. A file that cannot be read is renamed aside and a new one is started.
+History is plain text at `~/.local/share/notification-sidebar/history.json`, readable only by your user (mode 0600). It holds the app name, title and body of every notification kept, so anything that was sensitive on screen is now also on disk. Records older than the retention setting are dropped at load and once an hour, and at most 2000 records are kept. A file that cannot be read or parsed is renamed aside (to `history.json.corrupt-<time>`) and a new one is started. If it cannot be renamed aside, it is left untouched and that session keeps its history in memory only, with an error in the journal.
 
 ## The lock screen
 
