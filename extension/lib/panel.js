@@ -354,7 +354,13 @@ export class SidebarPanel {
     }
 
     _buildFooter() {
-        const footer = new St.BoxLayout({style_class: 'ns-panel-footer'});
+        const footer = new St.BoxLayout({
+            style_class: 'ns-panel-footer',
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+            accessible_name: 'Do Not Disturb',
+        });
         footer.add_child(new St.Label({
             text: 'Do Not Disturb',
             style_class: 'ns-panel-footer-label',
@@ -362,10 +368,26 @@ export class SidebarPanel {
             y_align: Clutter.ActorAlign.CENTER,
         }));
         this._switch = new PopupMenu.Switch(false);
-        // The switch is reactive and toggles itself (tap or drag), so its
-        // state is the single source of the setting.
-        this._switch.accessible_name = 'Do Not Disturb';
+        // The switch handles its own knob gestures. The row adds keyboard
+        // activation and clicks elsewhere on the row; both only call
+        // `toggle()`, so `notify::state` stays the single writer.
         footer.add_child(this._switch);
+        const click = new Clutter.ClickGesture();
+        click.connect('may-recognize', () => {
+            const target = global.stage.get_event_actor(click.get_point_event(0));
+            return !(target && this._switch.contains(target));
+        });
+        click.connect('recognize', () => this._switch.toggle());
+        footer.add_action(click);
+        footer.connect('key-press-event', (_a, event) => {
+            const key = event.get_key_symbol();
+            if (key === Clutter.KEY_space || key === Clutter.KEY_Return ||
+                key === Clutter.KEY_KP_Enter) {
+                this._switch.toggle();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
         this._actor.add_child(footer);
 
         // Do Not Disturb is the inverse of the desktop's `show-banners`.
@@ -383,7 +405,12 @@ export class SidebarPanel {
         sync();
         this._switch.connect('notify::state', () => {
             if (!syncing)
-                guarded(() => this._desktop.set_boolean('show-banners', !this._switch.state));
+                try {
+                    this._desktop.set_boolean('show-banners', !this._switch.state);
+                } catch (e) {
+                    console.error(e);
+                    sync();  // the setting refused: show what it really holds
+                }
         });
     }
 }
