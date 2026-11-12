@@ -420,15 +420,16 @@ export class SidebarPanel {
         this._desktopId = this._desktop.connect('changed::show-banners', sync);
         sync();
         this._switch.connect('notify::state', () => {
-            if (!syncing)
-                this._syncChecked(footer);
-                try {
-                    if (!this._desktop.set_boolean('show-banners', !this._switch.state))
-                        sync();  // key not writable: no `changed` will follow
-                } catch (e) {
-                    console.error(e);
-                    sync();  // the setting refused: show what it really holds
-                }
+            if (syncing)
+                return;  // the change came from the setting: nothing to write
+            this._syncChecked(footer);
+            try {
+                if (!this._desktop.set_boolean('show-banners', !this._switch.state))
+                    sync();  // key not writable: no `changed` will follow
+            } catch (e) {
+                console.error(e);
+                sync();  // the setting refused: show what it really holds
+            }
         });
     }
 }
