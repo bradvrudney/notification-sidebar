@@ -77,3 +77,241 @@
 .ns-panel-footer:focus {
     box-shadow: inset 0 0 0 2px #3584e4;
 }
+
+/* Notification list. Mockup classes: .sect -> .ns-heading, .msg -> .ns-card,
+   .line -> .ns-line, .grp/.gi/.gmore -> .ns-group/.in-group/.ns-more,
+   .pill -> .ns-pill, .dot -> .ns-dot, .btn -> .ns-action. */
+.ns-empty {
+    padding: 32px 0;
+    color: #88888f;
+}
+
+.ns-heading {
+    margin: 12px 4px 6px 4px;
+    spacing: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #b6b6bc;
+}
+
+.ns-heading.new {
+    color: #3584e4;
+}
+
+.ns-heading-rule {
+    min-width: 10px;
+    height: 2px;
+    border-radius: 2px;
+    background-color: #3584e4;
+}
+
+.ns-time {
+    font-size: 12.5px;
+    color: #88888f;
+}
+
+.ns-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background-color: #3584e4;
+}
+
+.ns-row-main {
+    border-radius: 12px;
+}
+
+.ns-row-main:focus,
+.ns-more:focus,
+.ns-remove:focus,
+.ns-action:focus {
+    box-shadow: inset 0 0 0 2px #3584e4;
+}
+
+.ns-remove {
+    color: #b6b6bc;
+    padding: 4px;
+    border-radius: 99px;
+}
+
+.ns-remove StIcon {
+    icon-size: 12px;
+}
+
+.ns-remove:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Card */
+.ns-card {
+    background-color: #3a3a3f;
+    border-radius: 12px;
+    margin-bottom: 6px;
+}
+
+.ns-card:hover {
+    background-color: #45454b;
+}
+
+.ns-card .ns-row-main {
+    padding: 10px 4px 10px 12px;
+}
+
+.ns-card .ns-remove {
+    margin: 8px 8px 0 0;
+}
+
+.ns-card-content {
+    spacing: 10px;
+}
+
+.ns-card-icon {
+    icon-size: 26px;
+}
+
+.ns-card-header {
+    spacing: 6px;
+}
+
+.ns-card-app {
+    font-size: 12.5px;
+    color: #b6b6bc;
+}
+
+.ns-card-title {
+    font-weight: 500;
+}
+
+.ns-row.new .ns-card-title {
+    font-weight: bold;
+}
+
+.ns-card-body {
+    color: #b6b6bc;
+}
+
+.ns-actions {
+    padding: 0 12px 10px 48px;
+    spacing: 6px;
+}
+
+.ns-action {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 4px 12px;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+.ns-action:hover {
+    background-color: rgba(255, 255, 255, 0.16);
+}
+
+/* Line */
+.ns-line {
+    border-radius: 8px;
+}
+
+.ns-line:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.ns-line .ns-row-main {
+    padding: 6px;
+    border-radius: 8px;
+}
+
+.ns-line .ns-remove {
+    margin-right: 4px;
+}
+
+.ns-line-content {
+    spacing: 9px;
+}
+
+.ns-line-icon {
+    icon-size: 20px;
+}
+
+.ns-line-title {
+    font-weight: 500;
+}
+
+.ns-line-body {
+    color: #b6b6bc;
+}
+
+/* From a previous login session: dimmed, outlined. */
+.ns-row.previous {
+    background-color: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.ns-row.previous .ns-card-title,
+.ns-row.previous .ns-card-body,
+.ns-row.previous .ns-line-title,
+.ns-row.previous .ns-line-body {
+    color: #88888f;
+}
+
+/* "Show more" */
+.ns-more {
+    padding: 4px 6px;
+    border-radius: 8px;
+    color: #b6b6bc;
+    font-size: 13px;
+}
+
+.ns-more:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Group (By app) */
+.ns-group {
+    background-color: #3a3a3f;
+    border-radius: 12px;
+    margin-bottom: 8px;
+}
+
+.ns-group-header {
+    padding: 10px 12px 8px 12px;
+    spacing: 10px;
+}
+
+.ns-group-app {
+    font-weight: bold;
+}
+
+.ns-pill {
+    background-color: #3584e4;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: bold;
+    border-radius: 99px;
+    padding: 1px 8px;
+}
+
+.ns-row.in-group {
+    background-color: transparent;
+    border-radius: 0;
+    margin: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.ns-row.in-group:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.ns-row.in-group .ns-row-main {
+    border-radius: 0;
+    padding: 7px 4px 7px 12px;
+}
+
+.ns-more.in-group {
+    padding: 7px 12px 9px 48px;
+}
+
+.ns-group .ns-row.in-group.previous {
+    border: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
+}

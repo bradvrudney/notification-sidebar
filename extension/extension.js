@@ -9,6 +9,7 @@ import {
 import {Recorder} from './lib/recorder.js';
 import {Indicator} from './lib/indicator.js';
 import {SidebarPanel} from './lib/panel.js';
+import {NotificationSection} from './lib/notificationSection.js';
 
 const PRUNE_INTERVAL_SECONDS = 3600;
 
@@ -70,7 +71,9 @@ export default class NotificationSidebarExtension extends Extension {
             }
         });
 
-        this._recorder = new Recorder({store: this._store, sessionId: currentSessionId()});
+        this._now = now;
+        this._sessionId = currentSessionId();
+        this._recorder = new Recorder({store: this._store, sessionId: this._sessionId});
         this._recorder.enable();
 
         this._pruneTimer = GLib.timeout_add_seconds(
@@ -105,17 +108,43 @@ export default class NotificationSidebarExtension extends Extension {
     }
 
     _buildUi() {
-        if (this._indicator || this._panel)
+        if (this._indicator || this._panel || this._section)
             return;
         try {
             const store = this._store;
+            const recorder = this._recorder;
+            this._section = new NotificationSection({
+                store,
+                recorder,
+                settings: this._settings,
+                sessionId: this._sessionId,
+                now: this._now,
+                closePanel: () => this._panel?.close(),
+            });
+            const section = this._section;
             this._panel = new SidebarPanel({
                 settings: this._settings,
-                onClosed: () => store.markSeen(),
+                onOpened: () => section.setOpen(true),
+                onClosed: () => {
+                    section.resetExpanded();
+                    section.setOpen(false);
+                    store.markSeen();
+                },
             });
+            this._panel.addSection({id: 'notifications', order: 0, actor: section.actor});
+            this._unsubscribeSearch = this._panel.onSearchChanged(text => section.setQuery(text));
             this._panel.setMenuHandlers({
                 onViewChosen: view => this._settings.set_string('view', view),
-                onClearAll: () => store.clear(),
+                onClearAll: () => {
+                    for (const id of recorder.liveIds()) {
+                        try {
+                            recorder.dismiss(id);
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    }
+                    store.clear();
+                },
                 onOpenSettings: () => {
                     this._panel?.close();
                     this.openPreferences();
@@ -140,11 +169,15 @@ export default class NotificationSidebarExtension extends Extension {
     }
 
     // Safe when nothing was built. Each step is isolated so one failure
-    // cannot leave the others behind (in particular the modal grab).
+    // cannot leave the others behind (in particular the modal grab). The
+    // panel goes before the section: closing it calls into the section and
+    // it holds the section's actor.
     _destroyUi() {
         const steps = [
             () => this._unsubscribeUi?.(),
+            () => this._unsubscribeSearch?.(),
             () => this._panel?.destroy(),
+            () => this._section?.destroy(),
             () => this._indicator?.destroy(),
         ];
         for (const step of steps) {
@@ -155,7 +188,9 @@ export default class NotificationSidebarExtension extends Extension {
             }
         }
         this._unsubscribeUi = null;
+        this._unsubscribeSearch = null;
         this._panel = null;
+        this._section = null;
         this._indicator = null;
     }
 
@@ -181,6 +216,8 @@ export default class NotificationSidebarExtension extends Extension {
         this._saver?.destroy();
         this._saver = null;
         this._store = null;
+        this._now = null;
+        this._sessionId = null;
         console.log('[notification-sidebar] disabled');
     }
 }

@@ -41,6 +41,11 @@ export DCONF_PROFILE=/dev/null GSETTINGS_BACKEND=keyfile
 
 make -C "$ROOT" install DEST="$XDG_DATA_HOME/gnome-shell/extensions/$UUID" >"$TMP/install.log" 2>&1 \
     || fail "install failed: $(cat "$TMP/install.log")"
+# Test-only driver (tests/smoke-driver), installed only here; the Shell finds
+# extensions at startup, so it goes in now and is enabled later.
+DRIVER="ns-smoke-driver@test.invalid"
+cp -r "$ROOT/tests/smoke-driver" "$XDG_DATA_HOME/gnome-shell/extensions/$DRIVER" \
+    || fail "driver install failed"
 
 # A desktop entry for the GTK-notification check, inside the isolated data dir.
 mkdir -p "$XDG_DATA_HOME/applications"
@@ -120,6 +125,26 @@ assert len(gtk) == 1, d["records"]
 assert gtk[0]["appId"] == "com.example.SmokeGtk.desktop", gtk[0]
 assert not [r for r in d["records"] if r["title"] == "Transient"], d["records"]
 PY
+
+# Drive the list with virtual pointer and keyboard input: clicks, hover,
+# Tab order, keyboard remove, views, search, more, clear all. The extension
+# reloads the history checked above. The driver ends with "done".
+gnome-extensions enable "$UUID" || fail "enable for driver failed"
+sleep 2
+gnome-extensions enable "$DRIVER" || fail "driver enable failed"
+for _ in $(seq 1 60); do
+    grep -q '\[ns-smoke-driver\] done' "$TMP/shell.log" && break
+    sleep 0.5
+done
+grep -q '\[ns-smoke-driver\] done' "$TMP/shell.log" || fail "driver did not finish"
+echo "smoke: driver checks:"
+grep -o '\[ns-smoke-driver\] .*' "$TMP/shell.log"
+if grep -q '\[ns-smoke-driver\] FAIL' "$TMP/shell.log"; then fail "driver check failed"; fi
+grep -q '\[ns-smoke-driver\] ok closed at end' "$TMP/shell.log" || fail "driver stopped early"
+gnome-extensions disable "$DRIVER" || fail "driver disable failed"
+gnome-extensions disable "$UUID" || fail "disable after driver failed"
+sleep 1
+check_log "after driver"
 echo "smoke: shell log lines mentioning the extension:"
 grep -n "notification-sidebar" "$TMP/shell.log" | sed -n 1,20p
 echo "SMOKE OK"

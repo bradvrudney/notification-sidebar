@@ -1,0 +1,6 @@
+{
+  "uuid": "ns-smoke-driver@test.invalid",
+  "name": "Notification sidebar smoke driver",
+  "description": "Test-only. Installed by scripts/smoke.sh into its isolated data dir; drives the sidebar with virtual input and logs results.",
+  "shell-version": ["51"]
+}
