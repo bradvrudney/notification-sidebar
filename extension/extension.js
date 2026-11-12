@@ -1,11 +1,14 @@
 import GLib from 'gi://GLib';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {HistoryStore} from './lib/core/store.js';
 import {
     loadHistory, saveHistory, quarantineHistory, DebouncedSaver, historyPath,
 } from './lib/core/historyFile.js';
 import {Recorder} from './lib/recorder.js';
+import {Indicator} from './lib/indicator.js';
+import {SidebarPanel} from './lib/panel.js';
 
 const PRUNE_INTERVAL_SECONDS = 3600;
 
@@ -79,10 +82,89 @@ export default class NotificationSidebarExtension extends Extension {
                 }
                 return GLib.SOURCE_CONTINUE;
             });
+
+        this._sessionModeId = Main.sessionMode.connect('updated', () => {
+            try {
+                this._saver?.flush();
+                this._syncUi();
+            } catch (e) {
+                console.error(e);
+            }
+        });
+        this._syncUi();
         console.log('[notification-sidebar] enabled');
     }
 
+    // The bell and panel exist only in the `user` session mode. A UI failure
+    // is logged and cleaned up; it never stops the recorder.
+    _syncUi() {
+        if (Main.sessionMode.currentMode === 'user')
+            this._buildUi();
+        else
+            this._destroyUi();
+    }
+
+    _buildUi() {
+        if (this._indicator || this._panel)
+            return;
+        try {
+            const store = this._store;
+            this._panel = new SidebarPanel({
+                settings: this._settings,
+                onClosed: () => store.markSeen(),
+            });
+            this._panel.setMenuHandlers({
+                onViewChosen: view => this._settings.set_string('view', view),
+                onClearAll: () => store.clear(),
+                onOpenSettings: () => {
+                    this._panel?.close();
+                    this.openPreferences();
+                },
+            });
+            this._indicator = new Indicator({onToggle: () => this._panel?.toggle()});
+            Main.panel.addToStatusArea(this.uuid, this._indicator, 0, 'right');
+            this._unsubscribeUi = store.subscribe(() => this._refreshCount());
+            this._refreshCount();
+            console.log('[notification-sidebar] interface built');
+        } catch (e) {
+            console.error(`notification-sidebar: could not build the interface: ${e.message}`);
+            console.error(e);
+            this._destroyUi();
+        }
+    }
+
+    _refreshCount() {
+        const n = this._store.newCount();
+        this._indicator?.setCount(n);
+        this._panel?.setNewCount(n);
+    }
+
+    // Safe when nothing was built. Each step is isolated so one failure
+    // cannot leave the others behind (in particular the modal grab).
+    _destroyUi() {
+        const steps = [
+            () => this._unsubscribeUi?.(),
+            () => this._panel?.destroy(),
+            () => this._indicator?.destroy(),
+        ];
+        for (const step of steps) {
+            try {
+                step();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        this._unsubscribeUi = null;
+        this._panel = null;
+        this._indicator = null;
+    }
+
     disable() {
+        this._destroyUi();
+        if (this._sessionModeId) {
+            Main.sessionMode.disconnect(this._sessionModeId);
+            this._sessionModeId = null;
+        }
         if (this._pruneTimer) {
             GLib.source_remove(this._pruneTimer);
             this._pruneTimer = null;
@@ -90,7 +172,7 @@ export default class NotificationSidebarExtension extends Extension {
         this._recorder?.disable();
         this._recorder = null;
         if (this._retentionId) {
-            this._settings.disconnect(this._retentionId);
+            this._settings?.disconnect(this._retentionId);
             this._retentionId = null;
         }
         this._settings = null;

@@ -80,12 +80,28 @@ gdbus call --session --dest org.gtk.Notifications --object-path /org/gtk/Notific
 notify-send -a SmokeApp "Twin smoke" "same" || fail "notify-send twin 1 failed"
 notify-send -a SmokeApp "Twin smoke" "same" || fail "notify-send twin 2 failed"
 sleep 2
+# Only JS errors and this extension's own errors count; the isolated session's
+# environment noise (a11y bus, PipeWire, portals, evolution-dataserver, lost
+# compositor connection) is not matched by either pattern.
+check_log() {
+    if grep -n 'JS ERROR' "$TMP/shell.log"; then fail "$1: JS ERROR in shell log"; fi
+    if grep -n 'could not build the interface' "$TMP/shell.log"; then
+        fail "$1: interface failed to build"
+    fi
+    if grep -n 'notification-sidebar' "$TMP/shell.log" | grep -i 'error'; then
+        fail "$1: extension error in shell log"
+    fi
+}
+check_log "after enable and notifications"
+grep -q 'notification-sidebar\] interface built' "$TMP/shell.log" || fail "interface was never built"
 gnome-extensions disable "$UUID" || fail "disable failed"
 sleep 1
 gnome-extensions enable "$UUID" || fail "re-enable failed"
 sleep 2
 gnome-extensions disable "$UUID" || fail "final disable failed"
 sleep 1
+gnome-extensions info "$UUID" 2>&1 | grep -q "State: INACTIVE" || fail "extension not INACTIVE after disable"
+check_log "after disable"
 
 HIST="$XDG_DATA_HOME/notification-sidebar/history.json"
 [ -f "$HIST" ] || fail "history file missing: $HIST"
@@ -104,4 +120,6 @@ assert len(gtk) == 1, d["records"]
 assert gtk[0]["appId"] == "com.example.SmokeGtk.desktop", gtk[0]
 assert not [r for r in d["records"] if r["title"] == "Transient"], d["records"]
 PY
+echo "smoke: shell log lines mentioning the extension:"
+grep -n "notification-sidebar" "$TMP/shell.log" | sed -n 1,20p
 echo "SMOKE OK"
