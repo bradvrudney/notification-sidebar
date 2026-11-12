@@ -42,6 +42,15 @@ export DCONF_PROFILE=/dev/null GSETTINGS_BACKEND=keyfile
 make -C "$ROOT" install DEST="$XDG_DATA_HOME/gnome-shell/extensions/$UUID" >"$TMP/install.log" 2>&1 \
     || fail "install failed: $(cat "$TMP/install.log")"
 
+# A desktop entry for the GTK-notification check, inside the isolated data dir.
+mkdir -p "$XDG_DATA_HOME/applications"
+cat >"$XDG_DATA_HOME/applications/com.example.SmokeGtk.desktop" <<'DESK'
+[Desktop Entry]
+Type=Application
+Name=Smoke Gtk
+Exec=true
+DESK
+
 gnome-shell --headless --wayland-display ns-smoke --virtual-monitor 1280x800 >"$TMP/shell.log" 2>&1 &
 SHELL_PID=$!
 
@@ -65,6 +74,9 @@ echo "$info" | grep -q "State: ACTIVE" || fail "extension not ACTIVE: $info"
 # Everything below runs inside the isolated dbus session started above.
 notify-send -a SmokeApp "Hello smoke" "<b>body</b> one" || fail "notify-send failed"
 notify-send -a SmokeApp -h boolean:transient:true "Transient" "x" || fail "notify-send (transient) failed"
+gdbus call --session --dest org.gtk.Notifications --object-path /org/gtk/Notifications \
+    --method org.gtk.Notifications.AddNotification com.example.SmokeGtk n1 \
+    '{"title": <"Gtk smoke">, "body": <"gtk body">}' >/dev/null || fail "gtk AddNotification failed"
 sleep 2
 gnome-extensions disable "$UUID" || fail "disable failed"
 sleep 1
@@ -84,6 +96,9 @@ hello = [r for r in d["records"] if r["title"] == "Hello smoke"]
 assert len(hello) == 1, d["records"]
 assert hello[0]["body"] == "body one", hello[0]
 assert hello[0]["appName"] == "SmokeApp", hello[0]
+gtk = [r for r in d["records"] if r["title"] == "Gtk smoke"]
+assert len(gtk) == 1, d["records"]
+assert gtk[0]["appId"] == "com.example.SmokeGtk.desktop", gtk[0]
 assert not [r for r in d["records"] if r["title"] == "Transient"], d["records"]
 PY
 echo "SMOKE OK"

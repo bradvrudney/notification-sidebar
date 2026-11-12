@@ -1,4 +1,5 @@
 import GLib from 'gi://GLib';
+import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {NotificationDestroyedReason} from 'resource:///org/gnome/shell/ui/messageTray.js';
 
@@ -114,14 +115,29 @@ export class Recorder {
             source.disconnect(id);
     }
 
-    _fields(source, n) {
-        let appId = null;
+    _appId(source) {
         try {
-            // Only FdoNotificationDaemonSource exposes a public `app` (Shell.App).
-            appId = source.app?.get_id() ?? null;
+            // Fdo sources expose a public `app` (Shell.App; id has the .desktop suffix).
+            const appId = source.app?.get_id();
+            if (appId)
+                return appId;
+            // Gtk app sources carry NotificationApplicationPolicy, whose public `id`
+            // is the app id without suffix. The generic policy has id 'generic', which
+            // no installed app matches, so the lookup below yields null for it.
+            const id = source.policy?.id;
+            if (typeof id === 'string' && id !== '') {
+                const desktopId = `${id}.desktop`;
+                if (Shell.AppSystem.get_default().lookup_app(desktopId))
+                    return desktopId;
+            }
         } catch (e) {
             console.error(e);
         }
+        return null;
+    }
+
+    _fields(source, n) {
+        const appId = this._appId(source);
         return {
             appName: source.title,
             appId,
