@@ -50,17 +50,27 @@ export function assertThrows(fn) {
         throw new Error('assertThrows failed: function did not throw');
 }
 
-export function run() {
+// Runs fn (sync or async); resolves to null on success or the Error on failure.
+export async function attempt(fn) {
+    try {
+        await fn();
+        return null;
+    } catch (e) {
+        return e;
+    }
+}
+
+export async function run() {
     let passed = 0;
     let failed = 0;
     for (const {name, fn} of tests) {
-        try {
-            fn();
+        const err = await attempt(fn);
+        if (err === null) {
             passed++;
             print(`ok   ${name}`);
-        } catch (e) {
+        } else {
             failed++;
-            print(`FAIL ${name}: ${e.message}`);
+            print(`FAIL ${name}: ${err.message}`);
         }
     }
     print(`${passed} passed, ${failed} failed`);

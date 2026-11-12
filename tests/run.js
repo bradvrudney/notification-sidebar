@@ -16,5 +16,5 @@ names.sort();
 for (const n of names)
     await import(`./${n}`);
 
-const failures = run();
+const failures = await run();
 System.exit(failures > 0 ? 1 : 0);
