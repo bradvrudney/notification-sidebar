@@ -1,0 +1,8 @@
+{
+  "uuid": "notification-sidebar@bradvrudney.github.io",
+  "name": "Notification Sidebar",
+  "description": "A sidebar that shows notifications and their history.",
+  "shell-version": ["51"],
+  "session-modes": ["user", "unlock-dialog"],
+  "settings-schema": "org.gnome.shell.extensions.notification-sidebar"
+}

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.notification-sidebar"
+          path="/org/gnome/shell/extensions/notification-sidebar/">
+    <key name="view" type="s">
+      <choices>
+        <choice value="timeline"/>
+        <choice value="by-app"/>
+        <choice value="new-then-history"/>
+      </choices>
+      <default>'new-then-history'</default>
+      <summary>Sidebar view</summary>
+    </key>
+    <key name="retention-days" type="i">
+      <range min="1" max="90"/>
+      <default>7</default>
+      <summary>Days of history to keep</summary>
+    </key>
+    <key name="show-search" type="b">
+      <default>true</default>
+      <summary>Show the search field</summary>
+    </key>
+  </schema>
+</schemalist>
