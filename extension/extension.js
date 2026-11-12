@@ -25,6 +25,15 @@ export function currentSessionId() {
 
 export default class NotificationSidebarExtension extends Extension {
     enable() {
+        try {
+            this._enable();
+        } catch (e) {
+            this.disable();
+            throw e;
+        }
+    }
+
+    _enable() {
         const path = historyPath();
         const now = () => Math.floor(Date.now() / 1000);
         this._settings = this.getSettings();

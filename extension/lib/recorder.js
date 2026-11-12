@@ -3,7 +3,7 @@ import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {NotificationDestroyedReason} from 'resource:///org/gnome/shell/ui/messageTray.js';
 
-import {makeRecord} from './core/record.js';
+import {makeRecord, sameNotification} from './core/record.js';
 import {toPlainText} from './core/text.js';
 
 function guarded(fn) {
@@ -34,7 +34,7 @@ export class Recorder {
             this._tray.connect('source-removed', guarded((_t, source) => this._unwatchSource(source))),
         ];
         for (const source of this._tray.getSources())
-            this._watchSource(source);
+            guarded(this._watchSource.bind(this))(source);
     }
 
     disable() {
@@ -103,7 +103,7 @@ export class Recorder {
             source.connect('notification-removed', guarded((_s, n) => this._forget(n, true))),
         ]);
         for (const n of [...source.notifications])
-            this._watch(source, n);
+            guarded(this._watch.bind(this))(source, n);
     }
 
     _unwatchSource(source) {
@@ -154,7 +154,11 @@ export class Recorder {
         if (this._notifications.has(n) || n.isTransient)
             return;
         const fields = this._fields(source, n);
-        let rec = this._store.find(fields, this._sessionId);
+        // Link to an existing record only if no other live notification already owns it,
+        // so identical notifications in the same second stay distinct records.
+        const linked = new Set([...this._notifications.values()].map(e => e.id));
+        let rec = this._store.records.find(r =>
+            !linked.has(r.id) && sameNotification(r, fields, this._sessionId));
         if (!rec) {
             rec = makeRecord(fields, this._sessionId, GLib.uuid_string_random);
             this._store.add(rec);

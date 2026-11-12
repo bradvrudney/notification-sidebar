@@ -77,6 +77,8 @@ notify-send -a SmokeApp -h boolean:transient:true "Transient" "x" || fail "notif
 gdbus call --session --dest org.gtk.Notifications --object-path /org/gtk/Notifications \
     --method org.gtk.Notifications.AddNotification com.example.SmokeGtk n1 \
     '{"title": <"Gtk smoke">, "body": <"gtk body">}' >/dev/null || fail "gtk AddNotification failed"
+notify-send -a SmokeApp "Twin smoke" "same" || fail "notify-send twin 1 failed"
+notify-send -a SmokeApp "Twin smoke" "same" || fail "notify-send twin 2 failed"
 sleep 2
 gnome-extensions disable "$UUID" || fail "disable failed"
 sleep 1
@@ -96,6 +98,7 @@ hello = [r for r in d["records"] if r["title"] == "Hello smoke"]
 assert len(hello) == 1, d["records"]
 assert hello[0]["body"] == "body one", hello[0]
 assert hello[0]["appName"] == "SmokeApp", hello[0]
+assert len([r for r in d["records"] if r["title"] == "Twin smoke"]) == 2, d["records"]
 gtk = [r for r in d["records"] if r["title"] == "Gtk smoke"]
 assert len(gtk) == 1, d["records"]
 assert gtk[0]["appId"] == "com.example.SmokeGtk.desktop", gtk[0]
