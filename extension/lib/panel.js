@@ -54,8 +54,11 @@ export class SidebarPanel {
             const type = event.type();
             if (this._open &&
                 (type === Clutter.EventType.BUTTON_PRESS || type === Clutter.EventType.TOUCH_BEGIN)) {
-                const source = event.get_source();
-                if (!source || !this._actor.contains(source)) {
+                const target = global.stage.get_event_actor(event);
+                // The popup menu is a separate actor stacked above the panel.
+                const inside = target &&
+                    (this._actor.contains(target) || this._menu?.actor.contains(target));
+                if (!inside && !this._menu?.isOpen) {
                     this.close();
                     return Clutter.EVENT_STOP;
                 }
@@ -148,7 +151,7 @@ export class SidebarPanel {
             return;
         this._open = false;
 
-        this._menu.close({animate: false});
+        guarded(() => this._menu?.close({animate: false}));
         if (this._grab) {
             const grab = this._grab;
             this._grab = null;
@@ -188,8 +191,20 @@ export class SidebarPanel {
     destroy() {
         if (this._destroyed)
             return;
-        this.close({animate: false});
-        this._destroyed = true;
+        try {
+            this.close({animate: false});
+        } finally {
+            this._destroyed = true;
+            this._teardown();
+        }
+    }
+
+    _teardown() {
+        if (this._grab) {
+            const grab = this._grab;
+            this._grab = null;
+            guarded(() => Main.popModal(grab));
+        }
 
         if (this._monitorsId) {
             Main.layoutManager.disconnect(this._monitorsId);
@@ -211,11 +226,14 @@ export class SidebarPanel {
         }
         this._sections.clear();
 
-        this._menu.destroy();
-        this._menu = null;
-        Main.layoutManager.removeChrome(this._actor);
-        this._actor.destroy();
-        this._actor = null;
+        try {
+            this._menu?.destroy();
+            this._menu = null;
+            Main.layoutManager.removeChrome(this._actor);
+        } finally {
+            this._actor.destroy();
+            this._actor = null;
+        }
     }
 
     _slideDistance() {
@@ -344,24 +362,28 @@ export class SidebarPanel {
             y_align: Clutter.ActorAlign.CENTER,
         }));
         this._switch = new PopupMenu.Switch(false);
-        const toggle = new St.Button({
-            child: this._switch,
-            can_focus: true,
-            accessible_name: 'Do Not Disturb',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        footer.add_child(toggle);
+        // The switch is reactive and toggles itself (tap or drag), so its
+        // state is the single source of the setting.
+        this._switch.accessible_name = 'Do Not Disturb';
+        footer.add_child(this._switch);
         this._actor.add_child(footer);
 
         // Do Not Disturb is the inverse of the desktop's `show-banners`.
         this._desktop = new Gio.Settings({schema_id: 'org.gnome.desktop.notifications'});
+        let syncing = false;
         const sync = () => {
-            this._switch.state = !this._desktop.get_boolean('show-banners');
+            syncing = true;
+            try {
+                this._switch.state = !this._desktop.get_boolean('show-banners');
+            } finally {
+                syncing = false;
+            }
         };
         this._desktopId = this._desktop.connect('changed::show-banners', sync);
         sync();
-        toggle.connect('clicked', () => {
-            this._desktop.set_boolean('show-banners', this._switch.state);
+        this._switch.connect('notify::state', () => {
+            if (!syncing)
+                guarded(() => this._desktop.set_boolean('show-banners', !this._switch.state));
         });
     }
 }
