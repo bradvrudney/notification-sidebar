@@ -149,3 +149,17 @@ test('fixtures: SAMPLE shape', () => {
     assertEqual(SAMPLE.filter(r => r.time > LAST_SEEN).length, 6);
     assertEqual(SAMPLE.filter(r => r.sessionId === 'old').length, 4);
 });
+test('store: a throwing subscriber does not stop others or the mutator', () => {
+    const errors = [];
+    const s = new HistoryStore({now: () => 1000, onError: e => errors.push(e)});
+    let fired = 0;
+    s.subscribe(() => {
+        throw new Error('boom');
+    });
+    s.subscribe(() => fired++);
+    s.add(rec({id: 'a'}));
+    assertEqual(fired, 1);
+    assertEqual(errors.length, 1);
+    assertEqual(errors[0].message, 'boom');
+    assertEqual(s.records.length, 1);
+});

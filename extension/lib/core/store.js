@@ -9,8 +9,10 @@ function validRecord(r) {
 }
 
 export class HistoryStore {
-    constructor({now, retentionDays = 7, maxRecords = 2000}) {
+    constructor({now, retentionDays = 7, maxRecords = 2000,
+        onError = e => console.error(`HistoryStore subscriber failed: ${e}`)}) {
         this._now = now;
+        this._onError = onError;
         this._retentionDays = retentionDays;
         this._maxRecords = maxRecords;
         this._entries = [];   // {rec, seq}
@@ -28,8 +30,13 @@ export class HistoryStore {
     }
 
     _notify() {
-        for (const fn of [...this._subs])
-            fn();
+        for (const fn of [...this._subs]) {
+            try {
+                fn();
+            } catch (e) {
+                this._onError(e);
+            }
+        }
     }
 
     _trim() {
