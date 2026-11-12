@@ -40,11 +40,27 @@ const texts = actor => descendants(actor, a => a instanceof St.Label || a instan
     .map(a => a instanceof St.Button ? a.label : a.text)
     .filter(t => t);
 
+// Present only in the isolated session scripts/smoke.sh starts: it exports
+// NS_SMOKE_INNER and writes this marker into its temp data dir.
+const MARKER = 'ns-smoke-driver-marker';
+
+function inSmokeSession() {
+    return GLib.getenv('NS_SMOKE_INNER') === '1' &&
+        GLib.file_test(GLib.build_filenamev([GLib.get_user_data_dir(), MARKER]),
+            GLib.FileTest.EXISTS);
+}
+
 export default class SmokeDriver extends Extension {
     enable() {
         this._timers = new Set();
-        this._cancelled = false;
         this._sources = [];
+        this._pointer = null;
+        this._keyboard = null;
+        if (!inSmokeSession()) {
+            console.log(`${TAG} not a smoke session (no marker); doing nothing`);
+            return;
+        }
+        this._cancelled = false;
         const seat = global.stage.context.get_backend().get_default_seat();
         this._pointer = seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
         this._keyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);

@@ -6,25 +6,30 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -z "${NS_SMOKE_INNER:-}" ]; then
     # Outer: create the temp dir and run everything under it, with its own
     # runtime dir, so nothing touches the live session's /run/user/<uid>.
-    TMP="$(mktemp -d)"
+    TMP="$(mktemp -d)" || exit 1
+    if [ -z "$TMP" ] || [ ! -d "$TMP" ]; then
+        echo "smoke: mktemp did not create a temp dir" >&2
+        exit 1
+    fi
     # Session daemons (gvfs, document portal) may still hold FUSE mounts under
-    # $TMP/runtime for a moment after the bus goes away: wait, lazy-unmount, retry.
+    # $TMP/runtime for a moment after the bus goes away. Unmount first (lazily),
+    # then remove without crossing into any other file system; retry.
     rm_tmp() {
         for _ in 1 2 3 4 5 6 7 8 9 10; do
-            rm -rf "$TMP" 2>/dev/null && return 0
             for m in "$TMP"/runtime/gvfs "$TMP"/runtime/doc; do
                 fusermount3 -uz "$m" 2>/dev/null
             done
+            rm -rf --one-file-system "$TMP" 2>/dev/null && return 0
             sleep 0.5
         done
         echo "smoke: could not remove $TMP" >&2
     }
     trap rm_tmp EXIT
-    mkdir -p "$TMP/data" "$TMP/config" "$TMP/cache" "$TMP/runtime"
+    mkdir -p "$TMP/data" "$TMP/config" "$TMP/cache" "$TMP/state" "$TMP/runtime"
     chmod 700 "$TMP/runtime"
     export NS_SMOKE_INNER=1 NS_SMOKE_TMP="$TMP"
     export XDG_DATA_HOME="$TMP/data" XDG_CONFIG_HOME="$TMP/config" XDG_CACHE_HOME="$TMP/cache"
-    export XDG_RUNTIME_DIR="$TMP/runtime"
+    export XDG_STATE_HOME="$TMP/state" XDG_RUNTIME_DIR="$TMP/runtime"
     dbus-run-session -- bash "${BASH_SOURCE[0]}"
     exit $?
 fi
@@ -40,6 +45,27 @@ trap cleanup EXIT
 fail() { echo "SMOKE FAIL: $1"; [ -f "$TMP/shell.log" ] && tail -n 30 "$TMP/shell.log"; exit 1; }
 
 export DCONF_PROFILE=/dev/null GSETTINGS_BACKEND=keyfile
+
+# Every gsettings write below must land in the isolated keyfile store.
+if [ -z "$TMP" ] || [ ! -d "$TMP" ]; then
+    echo "smoke: NS_SMOKE_TMP is not a directory; refusing to continue" >&2
+    exit 1
+fi
+case "${XDG_CONFIG_HOME:-}" in
+    "$TMP"/?*) ;;
+    *) echo "smoke: XDG_CONFIG_HOME='${XDG_CONFIG_HOME:-}' is not under $TMP; refusing to write settings" >&2
+       exit 1 ;;
+esac
+if [ "${GSETTINGS_BACKEND:-}" != keyfile ]; then
+    echo "smoke: GSETTINGS_BACKEND is not keyfile; refusing to write settings" >&2
+    exit 1
+fi
+# The nested Shell runs the stock automount manager; keep it from mounting
+# anything (a gvfs mount would land under the temp runtime dir).
+gsettings set org.gnome.desktop.media-handling automount false || fail "could not turn off automount"
+gsettings set org.gnome.desktop.media-handling automount-open false || fail "could not turn off automount-open"
+# Marker the test-only driver requires before it does anything.
+touch "$XDG_DATA_HOME/ns-smoke-driver-marker" || fail "could not write the driver marker"
 
 make -C "$ROOT" install DEST="$XDG_DATA_HOME/gnome-shell/extensions/$UUID" >"$TMP/install.log" 2>&1 \
     || fail "install failed: $(cat "$TMP/install.log")"
