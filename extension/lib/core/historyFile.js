@@ -25,16 +25,21 @@ export function loadHistory(path, {onError = console.error} = {}) {
             throw new Error('not an object');
         return {data, quarantined: null};
     } catch (e) {
-        const quarantined = `${path}.corrupt-${Math.floor(Date.now() / 1000)}`;
         onError(`notification-sidebar: corrupt history ${path}: ${e.message}`);
-        try {
-            Gio.File.new_for_path(path).move(
-                Gio.File.new_for_path(quarantined), Gio.FileCopyFlags.OVERWRITE, null, null);
-            return {data: null, quarantined};
-        } catch (e2) {
-            onError(`notification-sidebar: cannot quarantine ${path}: ${e2.message}`);
-            return {data: null, quarantined: null};
-        }
+        return {data: null, quarantined: quarantineHistory(path, {onError})};
+    }
+}
+
+// Never throws. Moves an unusable history file aside; returns the new path or null.
+export function quarantineHistory(path, {onError = console.error} = {}) {
+    const quarantined = `${path}.corrupt-${Math.floor(Date.now() / 1000)}`;
+    try {
+        Gio.File.new_for_path(path).move(
+            Gio.File.new_for_path(quarantined), Gio.FileCopyFlags.OVERWRITE, null, null);
+        return quarantined;
+    } catch (e) {
+        onError(`notification-sidebar: cannot quarantine ${path}: ${e.message}`);
+        return null;
     }
 }
 
@@ -68,10 +73,11 @@ export class DebouncedSaver {
         this._setTimer = setTimer;
         this._clearTimer = clearTimer;
         this._timer = null;
+        this._destroyed = false;
     }
 
     schedule() {
-        if (this._timer !== null)
+        if (this._destroyed || this._timer !== null)
             return;
         this._timer = this._setTimer(() => {
             this._timer = null;
@@ -89,5 +95,6 @@ export class DebouncedSaver {
 
     destroy() {
         this.flush();
+        this._destroyed = true;
     }
 }

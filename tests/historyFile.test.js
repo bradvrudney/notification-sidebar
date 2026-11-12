@@ -1,7 +1,7 @@
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import {test, assertEqual, assertTrue} from './harness.js';
-import {loadHistory, saveHistory, DebouncedSaver, historyPath} from '../extension/lib/core/historyFile.js';
+import {loadHistory, saveHistory, DebouncedSaver, historyPath, quarantineHistory} from '../extension/lib/core/historyFile.js';
 
 const OBJ = {version: 1, lastSeen: 5, records: []};
 
@@ -102,3 +102,22 @@ test('debounce: destroy flushes pending save and clears the timer', () => {
     assertEqual(t.cleared.length, 1);
     assertEqual(t.active.size, 0);
 });
+test('debounce: schedule after destroy arms no timer', () => {
+    const t = fakeTimers();
+    let calls = 0;
+    const s = new DebouncedSaver(() => calls++, {setTimer: t.setTimer, clearTimer: t.clearTimer});
+    s.destroy();
+    s.schedule();
+    assertEqual(t.sets, 0);
+    assertEqual(t.active.size, 0);
+    s.flush();
+    assertEqual(calls, 0);
+});
+test('historyFile: quarantineHistory moves a valid-JSON file aside', () => withTmp(tmp => {
+    const p = `${tmp}/h.json`;
+    saveHistory(p, {version: 99});
+    const q = quarantineHistory(p);
+    assertTrue(q !== null && q.startsWith(`${p}.corrupt-`));
+    assertEqual(loadHistory(p), {data: null, quarantined: null});
+    assertEqual(loadHistory(q, {onError: () => {}}).data, {version: 99});
+}));

@@ -1,11 +1,95 @@
+import GLib from 'gi://GLib';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+
+import {HistoryStore} from './lib/core/store.js';
+import {
+    loadHistory, saveHistory, quarantineHistory, DebouncedSaver, historyPath,
+} from './lib/core/historyFile.js';
+import {Recorder} from './lib/recorder.js';
+
+const PRUNE_INTERVAL_SECONDS = 3600;
+
+function readFile(path) {
+    try {
+        const [ok, bytes] = GLib.file_get_contents(path);
+        return ok ? new TextDecoder().decode(bytes).trim() : '';
+    } catch (e) {
+        return '';
+    }
+}
+
+export function currentSessionId() {
+    const bootId = readFile('/proc/sys/kernel/random/boot_id');
+    return `${bootId}:${GLib.getenv('XDG_SESSION_ID') ?? ''}`;
+}
 
 export default class NotificationSidebarExtension extends Extension {
     enable() {
+        const path = historyPath();
+        const now = () => Math.floor(Date.now() / 1000);
+        this._settings = this.getSettings();
+        const opts = {now, retentionDays: this._settings.get_int('retention-days')};
+
+        const {data, quarantined} = loadHistory(path);
+        if (quarantined)
+            console.error(`notification-sidebar: moved unreadable history to ${quarantined}`);
+        let store = null;
+        if (data) {
+            try {
+                store = HistoryStore.fromJSON(data, opts);
+            } catch (e) {
+                console.error(`notification-sidebar: unusable history ${path}: ${e.message}`);
+                const moved = quarantineHistory(path);
+                if (moved)
+                    console.error(`notification-sidebar: moved unusable history to ${moved}`);
+            }
+        }
+        this._store = store ?? new HistoryStore(opts);
+        this._store.prune();
+
+        this._saver = new DebouncedSaver(() => saveHistory(path, this._store.toJSON()));
+        this._unsubscribeSaver = this._store.subscribe(() => this._saver.schedule());
+
+        this._retentionId = this._settings.connect('changed::retention-days', () => {
+            try {
+                this._store.setRetentionDays(this._settings.get_int('retention-days'));
+            } catch (e) {
+                console.error(e);
+            }
+        });
+
+        this._recorder = new Recorder({store: this._store, sessionId: currentSessionId()});
+        this._recorder.enable();
+
+        this._pruneTimer = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT, PRUNE_INTERVAL_SECONDS, () => {
+                try {
+                    this._store.prune();
+                } catch (e) {
+                    console.error(e);
+                }
+                return GLib.SOURCE_CONTINUE;
+            });
         console.log('[notification-sidebar] enabled');
     }
 
     disable() {
+        if (this._pruneTimer) {
+            GLib.source_remove(this._pruneTimer);
+            this._pruneTimer = null;
+        }
+        this._recorder?.disable();
+        this._recorder = null;
+        if (this._retentionId) {
+            this._settings.disconnect(this._retentionId);
+            this._retentionId = null;
+        }
+        this._settings = null;
+        this._unsubscribeSaver?.();
+        this._unsubscribeSaver = null;
+        this._saver?.destroy();
+        this._saver = null;
+        this._store = null;
         console.log('[notification-sidebar] disabled');
     }
 }

@@ -61,4 +61,29 @@ gnome-extensions enable "$UUID" || fail "gnome-extensions enable failed"
 sleep 2
 info="$(gnome-extensions info "$UUID" 2>&1)"
 echo "$info" | grep -q "State: ACTIVE" || fail "extension not ACTIVE: $info"
+
+# Everything below runs inside the isolated dbus session started above.
+notify-send -a SmokeApp "Hello smoke" "<b>body</b> one" || fail "notify-send failed"
+notify-send -a SmokeApp -h boolean:transient:true "Transient" "x" || fail "notify-send (transient) failed"
+sleep 2
+gnome-extensions disable "$UUID" || fail "disable failed"
+sleep 1
+gnome-extensions enable "$UUID" || fail "re-enable failed"
+sleep 2
+gnome-extensions disable "$UUID" || fail "final disable failed"
+sleep 1
+
+HIST="$XDG_DATA_HOME/notification-sidebar/history.json"
+[ -f "$HIST" ] || fail "history file missing: $HIST"
+[ "$(stat -c %a "$HIST")" = "600" ] || fail "history mode is $(stat -c %a "$HIST"), want 600"
+python3 -I - "$HIST" <<'PY' || fail "history content check failed"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["version"] == 1, d
+hello = [r for r in d["records"] if r["title"] == "Hello smoke"]
+assert len(hello) == 1, d["records"]
+assert hello[0]["body"] == "body one", hello[0]
+assert hello[0]["appName"] == "SmokeApp", hello[0]
+assert not [r for r in d["records"] if r["title"] == "Transient"], d["records"]
+PY
 echo "SMOKE OK"
