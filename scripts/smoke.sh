@@ -31,7 +31,9 @@ fi
 
 TMP="$NS_SMOKE_TMP"
 SHELL_PID=""
+MPRIS_PID=""
 cleanup() {
+    [ -n "$MPRIS_PID" ] && kill "$MPRIS_PID" 2>/dev/null && wait "$MPRIS_PID" 2>/dev/null
     [ -n "$SHELL_PID" ] && kill "$SHELL_PID" 2>/dev/null && wait "$SHELL_PID" 2>/dev/null
 }
 trap cleanup EXIT
@@ -96,6 +98,11 @@ check_log() {
     if grep -n 'notification-sidebar' "$TMP/shell.log" | grep -i 'error'; then
         fail "$1: extension error in shell log"
     fi
+    # Mutter names a keybinding it is asked to add twice (one that was not
+    # restored, or restored over ours).
+    if grep -n 'toggle-message-tray' "$TMP/shell.log"; then
+        fail "$1: toggle-message-tray keybinding warning in shell log"
+    fi
 }
 check_log "after enable and notifications"
 grep -q 'notification-sidebar\] interface built' "$TMP/shell.log" || fail "interface was never built"
@@ -126,13 +133,29 @@ assert gtk[0]["appId"] == "com.example.SmokeGtk.desktop", gtk[0]
 assert not [r for r in d["records"] if r["title"] == "Transient"], d["records"]
 PY
 
+# A fake MPRIS player on the isolated bus, for the media section. The driver
+# makes it quit; the cleanup trap kills it if it is still running.
+gjs -m "$ROOT/tests/fake-mpris-player.js" >"$TMP/mpris.log" 2>&1 &
+MPRIS_PID=$!
+mpris=""
+for _ in $(seq 1 20); do
+    kill -0 "$MPRIS_PID" 2>/dev/null || fail "fake media player exited early: $(cat "$TMP/mpris.log")"
+    if gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+        --method org.freedesktop.DBus.NameHasOwner org.mpris.MediaPlayer2.NsSmoke 2>/dev/null | grep -q true; then
+        mpris=1; break
+    fi
+    sleep 0.5
+done
+[ -n "$mpris" ] || fail "fake media player never appeared on the bus"
+
 # Drive the list with virtual pointer and keyboard input: clicks, hover,
-# Tab order, keyboard remove, views, search, more, clear all. The extension
-# reloads the history checked above. The driver ends with "done".
+# Tab order, keyboard remove, views, search, more, clear all, then the media
+# section, Super+V and the clock-menu takeover across disable/enable. The
+# extension reloads the history checked above. The driver ends with "done".
 gnome-extensions enable "$UUID" || fail "enable for driver failed"
 sleep 2
 gnome-extensions enable "$DRIVER" || fail "driver enable failed"
-for _ in $(seq 1 60); do
+for _ in $(seq 1 120); do
     grep -q '\[ns-smoke-driver\] done' "$TMP/shell.log" && break
     sleep 0.5
 done
@@ -141,6 +164,11 @@ echo "smoke: driver checks:"
 grep -o '\[ns-smoke-driver\] .*' "$TMP/shell.log"
 if grep -q '\[ns-smoke-driver\] FAIL' "$TMP/shell.log"; then fail "driver check failed"; fi
 grep -q '\[ns-smoke-driver\] ok closed at end' "$TMP/shell.log" || fail "driver stopped early"
+grep -q '\[ns-smoke-driver\] ok takeover checks finished' "$TMP/shell.log" \
+    || fail "driver stopped before the takeover checks finished"
+kill -0 "$MPRIS_PID" 2>/dev/null && fail "fake media player still running: the driver did not quit it"
+wait "$MPRIS_PID" 2>/dev/null
+MPRIS_PID=""
 gnome-extensions disable "$DRIVER" || fail "driver disable failed"
 gnome-extensions disable "$UUID" || fail "disable after driver failed"
 sleep 1

@@ -34,6 +34,7 @@ export class SidebarPanel {
         this._searchListeners = new Set();
         this._handlers = {};
         this._settingsIds = [];
+        this._isToggleKey = null;
         this._destroyed = false;
 
         this._actor = new St.BoxLayout({
@@ -53,6 +54,14 @@ export class SidebarPanel {
         // outside the panel shows up here.
         this._actor.connect('captured-event', (_a, event) => {
             const type = event.type();
+            // The Shell runs no keybinding under this grab (action mode
+            // NONE), so the toggle shortcut is matched here to close.
+            if (this._open && type === Clutter.EventType.KEY_PRESS &&
+                !(event.get_flags() & Clutter.EventFlags.FLAG_REPEATED) &&
+                this._matchesToggleKey(event)) {
+                this.close();
+                return Clutter.EVENT_STOP;
+            }
             if (this._open &&
                 (type === Clutter.EventType.BUTTON_PRESS || type === Clutter.EventType.TOUCH_BEGIN)) {
                 const target = global.stage.get_event_actor(event);
@@ -105,6 +114,21 @@ export class SidebarPanel {
     setNewCount(n) {
         this._count.visible = n > 0;
         this._count.text = `${n} new`;
+    }
+
+    // `isToggleKey(event)` tells whether a key press is the shortcut that
+    // toggles the panel; null when there is none.
+    setToggleKey(isToggleKey) {
+        this._isToggleKey = isToggleKey;
+    }
+
+    _matchesToggleKey(event) {
+        try {
+            return !!this._isToggleKey?.(event);
+        } catch (e) {
+            console.error(e);
+            return false;
+        }
     }
 
     setMenuHandlers({onViewChosen, onClearAll, onOpenSettings}) {
@@ -224,6 +248,7 @@ export class SidebarPanel {
         this._desktop = null;
 
         this._searchListeners.clear();
+        this._isToggleKey = null;
         for (const {actor} of this._sections.values()) {
             if (actor.get_parent() === this._host)
                 this._host.remove_child(actor);

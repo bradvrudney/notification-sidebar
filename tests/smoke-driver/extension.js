@@ -6,7 +6,9 @@
 // then `[ns-smoke-driver] done`. It reaches into the target's own fields
 // (`_panel`, `_section`, ...) because there is no other way in.
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -15,6 +17,10 @@ import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
 const TARGET = 'notification-sidebar@bradvrudney.github.io';
 const TAG = '[ns-smoke-driver]';
 const SETTLE_MS = 400;
+// Served by tests/fake-mpris-player.js, started by scripts/smoke.sh.
+const MPRIS_NAME = 'org.mpris.MediaPlayer2.NsSmoke';
+const STOCK_TRAY_MODES =
+    Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW | Shell.ActionMode.POPUP;
 
 function descendants(actor, pred) {
     const out = [];
@@ -113,7 +119,21 @@ export default class SmokeDriver extends Extension {
         await this._wait();
     }
 
-    _notify(title, actionLabel = null) {
+    // Super+V, or whatever the default `toggle-message-tray` binding is
+    // pressed as: Super held, V pressed and released.
+    async _superV() {
+        const t = () => GLib.get_monotonic_time();
+        this._keyboard.notify_keyval(t(), Clutter.KEY_Super_L, Clutter.KeyState.PRESSED);
+        await this._wait(30);
+        this._keyboard.notify_keyval(t(), Clutter.KEY_v, Clutter.KeyState.PRESSED);
+        await this._wait(30);
+        this._keyboard.notify_keyval(t(), Clutter.KEY_v, Clutter.KeyState.RELEASED);
+        await this._wait(30);
+        this._keyboard.notify_keyval(t(), Clutter.KEY_Super_L, Clutter.KeyState.RELEASED);
+        await this._wait();
+    }
+
+    _notify(title, actionLabel = null, urgency = null) {
         const source = new MessageTray.Source({
             title: 'Driver',
             iconName: 'dialog-information-symbolic',
@@ -129,6 +149,8 @@ export default class SmokeDriver extends Extension {
         n.connect('activated', () => counts.activated++);
         if (actionLabel)
             n.addAction(actionLabel, () => counts.action++);
+        if (urgency !== null)
+            n.urgency = urgency;
         source.addNotification(n);
         return counts;
     }
@@ -190,6 +212,11 @@ export default class SmokeDriver extends Extension {
         this._check('more-new row', all.includes('Show 1 more new'), JSON.stringify(all));
         await this._wait(700);
         this._check('panel opens with grab', panel.isOpen && Main.modalCount > 0);
+
+        // The media section, while the fake player runs. Checked first and
+        // the player quit at the end, so the notification checks below see
+        // the same layout as before.
+        await this._mediaChecks(ext, panel);
 
         // The three views, switched while open.
         settings.set_string('view', 'timeline');
@@ -339,5 +366,151 @@ export default class SmokeDriver extends Extension {
         await this._wait();
         this._check('rows dropped at end', rowCount() === 0 && section().get_n_children() === 0);
         this._check('closed at end', !panel.isOpen && Main.modalCount === 0);
+
+        await this._takeoverChecks(ext);
+    }
+
+    async _mediaChecks(ext, panel) {
+        const media = ext._media;
+        this._check('media section exists', !!media);
+        if (!media)
+            return;
+        const shown = await this._waitFor(
+            () => media.actor.visible && media.actor.get_n_children() === 1, 5000);
+        this._check('media section shows the player',
+            shown >= 0 && texts(media.actor).includes('Smoke track'),
+            JSON.stringify(texts(media.actor)));
+        if (shown < 0)
+            return;
+        await this._wait();
+        const kids = panel._host.get_children();
+        this._check('media section above notifications',
+            kids.indexOf(media.actor) === 0 && kids.indexOf(this._section.actor) === 1,
+            `media at ${kids.indexOf(media.actor)}, notifications at ${kids.indexOf(this._section.actor)}`);
+
+        const message = media.actor.get_first_child();
+        const [mx] = message.get_transformed_position();
+        const [px] = panel._actor.get_transformed_position();
+        const [minWidth] = message.get_preferred_width(-1);
+        this._check('media message fits the panel',
+            message.width > 0 && minWidth <= message.width &&
+            mx + message.width <= px + panel._actor.width,
+            `x ${mx} w ${message.width} min ${minWidth}, panel x ${px} w ${panel._actor.width}`);
+
+        const controls = descendants(message, hasClass('message-media-control'));
+        const play = controls[1];
+        const icon = () => play?.child?.icon_name;
+        this._check('media controls shown', controls.length === 3 &&
+            icon() === 'media-playback-start-symbolic', `${controls.length} ${icon()}`);
+        if (play) {
+            await this._click(play);
+            const flipped = await this._waitFor(
+                () => icon() === 'media-playback-pause-symbolic', 3000);
+            this._check('play/pause by pointer inside the grab',
+                flipped >= 0 && panel.isOpen && Main.modalCount > 0,
+                `${icon()} open ${panel.isOpen} modal ${Main.modalCount}`);
+        }
+
+        // Clicking the message raises the player (a no-op here) and closes
+        // the panel, as activating a notification row does. Closing marks
+        // everything seen, which the notification checks after this rely
+        // on not happening yet: hold it off for this one close.
+        const store = ext._store;
+        store.markSeen = () => {};
+        await this._click(message.titleLabel);
+        delete store.markSeen;
+        this._check('media message click closes the panel', !panel.isOpen && Main.modalCount === 0,
+            `open ${panel.isOpen} modal ${Main.modalCount}`);
+        if (!panel.isOpen) {
+            panel.open();
+            await this._wait(700);
+        }
+
+        Gio.DBus.session.call(MPRIS_NAME, '/org/mpris/MediaPlayer2', 'org.mpris.MediaPlayer2',
+            'Quit', null, null, Gio.DBusCallFlags.NONE, -1, null, null);
+        const gone = await this._waitFor(
+            () => !media.actor.visible && media.actor.get_n_children() === 0, 5000);
+        this._check('media section hides when the player quits', gone >= 0,
+            `visible ${media.actor.visible}, ${media.actor.get_n_children()} children`);
+    }
+
+    // The clock menu and Super+V, taken over while enabled and stock after
+    // disable, over two disable/enable cycles. The target's disable() and
+    // enable() are called directly: going through the extension manager
+    // would disable and re-enable this driver too (it is enabled later).
+    async _takeoverChecks(ext) {
+        const dm = Main.panel.statusArea.dateMenu;
+        for (let cycle = 1; cycle <= 2; cycle++) {
+            // eslint-disable-next-line no-await-in-loop
+            await this._postUnseen(dm, `cycle ${cycle}`);
+            // eslint-disable-next-line no-await-in-loop
+            await this._expectTakenOver(ext, dm, `cycle ${cycle} enabled`);
+            ext.disable();
+            // eslint-disable-next-line no-await-in-loop
+            await this._wait();
+            // eslint-disable-next-line no-await-in-loop
+            await this._expectStock(dm, `cycle ${cycle} disabled`);
+            ext.enable();
+            // eslint-disable-next-line no-await-in-loop
+            await this._wait(1000);
+        }
+        await this._postUnseen(dm, 'after cycles');
+        await this._expectTakenOver(ext, dm, 'after cycles');
+
+        // The Shell resets the list's visibility on every session update.
+        Main.sessionMode.emit('updated');
+        await this._wait();
+        this._check('list stays hidden after a session update', !dm._messageList.visible);
+        this._check('takeover checks finished', true);
+    }
+
+    // A low-urgency notification gets no banner, so it stays unseen and the
+    // stock dot has something to show. Opening the stock clock menu marks
+    // everything seen, so each cycle posts a new one.
+    async _postUnseen(dm, label) {
+        this._notify(`Driver dot ${label}`, null, MessageTray.Urgency.LOW);
+        const counted = await this._waitFor(() => dm._indicator._count > 0, 3000);
+        this._check(`${label}: unseen notification for the dot`, counted >= 0,
+            `${dm._indicator._count}`);
+    }
+
+    async _expectTakenOver(ext, dm, label) {
+        this._check(`${label}: clock list hidden`, !dm._messageList.visible);
+        this._check(`${label}: clock dot hidden`, !dm._indicator.visible && dm._indicator._count > 0,
+            `visible ${dm._indicator.visible} count ${dm._indicator._count}`);
+        this._check(`${label}: keybinding modes`,
+            Main.wm._allowedKeybindings['toggle-message-tray'] === STOCK_TRAY_MODES);
+        const panel = ext._panel;
+        if (!panel) {
+            this._check(`${label}: panel built`, false);
+            return;
+        }
+        await this._superV();
+        this._check(`${label}: super+v opens the sidebar`,
+            panel.isOpen && !dm.menu.isOpen && Main.modalCount > 0,
+            `open ${panel.isOpen} clock ${dm.menu.isOpen} modal ${Main.modalCount}`);
+        await this._wait(300);
+        await this._superV();
+        this._check(`${label}: super+v closes the open sidebar`,
+            !panel.isOpen && Main.modalCount === 0,
+            `open ${panel.isOpen} modal ${Main.modalCount}`);
+    }
+
+    async _expectStock(dm, label) {
+        const stockList = Main.sessionMode.hasNotifications && !Main.sessionMode.isGreeter;
+        this._check(`${label}: clock list back to stock`,
+            stockList && dm._messageList.visible === stockList, `${dm._messageList.visible}`);
+        const banners = new Gio.Settings({schema_id: 'org.gnome.desktop.notifications'})
+            .get_boolean('show-banners');
+        this._check(`${label}: clock dot back`,
+            banners && dm._indicator._count > 0 && dm._indicator.visible,
+            `banners ${banners} count ${dm._indicator._count} visible ${dm._indicator.visible}`);
+        this._check(`${label}: keybinding modes`,
+            Main.wm._allowedKeybindings['toggle-message-tray'] === STOCK_TRAY_MODES);
+        await this._superV();
+        this._check(`${label}: stock super+v opens the clock menu`, dm.menu.isOpen);
+        await this._superV();
+        this._check(`${label}: stock super+v closes the clock menu`,
+            !dm.menu.isOpen && Main.modalCount === 0, `open ${dm.menu.isOpen} modal ${Main.modalCount}`);
     }
 }

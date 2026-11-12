@@ -10,6 +10,8 @@ import {Recorder} from './lib/recorder.js';
 import {Indicator} from './lib/indicator.js';
 import {SidebarPanel} from './lib/panel.js';
 import {NotificationSection} from './lib/notificationSection.js';
+import {MediaSection} from './lib/mediaSection.js';
+import {ShellTakeover} from './lib/shellTakeover.js';
 
 const PRUNE_INTERVAL_SECONDS = 3600;
 
@@ -98,8 +100,8 @@ export default class NotificationSidebarExtension extends Extension {
         console.log('[notification-sidebar] enabled');
     }
 
-    // The bell and panel exist only in the `user` session mode. A UI failure
-    // is logged and cleaned up; it never stops the recorder.
+    // The bell, panel and takeover exist only in the `user` session mode. A
+    // UI failure is logged and cleaned up; it never stops the recorder.
     _syncUi() {
         if (Main.sessionMode.currentMode === 'user')
             this._buildUi();
@@ -108,7 +110,7 @@ export default class NotificationSidebarExtension extends Extension {
     }
 
     _buildUi() {
-        if (this._indicator || this._panel || this._section)
+        if (this._indicator || this._panel || this._section || this._media)
             return;
         try {
             const store = this._store;
@@ -131,7 +133,9 @@ export default class NotificationSidebarExtension extends Extension {
                     store.markSeen();
                 },
             });
-            this._panel.addSection({id: 'notifications', order: 0, actor: section.actor});
+            this._panel.addSection({id: 'notifications', order: 10, actor: section.actor});
+            this._media = new MediaSection({closePanel: () => this._panel?.close()});
+            this._panel.addSection({id: 'media', order: 0, actor: this._media.actor});
             this._unsubscribeSearch = this._panel.onSearchChanged(text => section.setQuery(text));
             this._panel.setMenuHandlers({
                 onViewChosen: view => this._settings.set_string('view', view),
@@ -160,7 +164,41 @@ export default class NotificationSidebarExtension extends Extension {
             console.error(`notification-sidebar: could not build the interface: ${e.message}`);
             console.error(e);
             this._destroyUi();
+            return;
         }
+        this._enableTakeover();
+    }
+
+    // Last step of building the interface, only once all of it exists. On
+    // failure the Shell is left stock (ShellTakeover undoes a partial
+    // enable) and the sidebar keeps working from the bell.
+    _enableTakeover() {
+        try {
+            this._takeover = new ShellTakeover({onToggle: () => this._toggleFromShortcut()});
+            this._takeover.enable();
+            const takeover = this._takeover;
+            this._panel.setToggleKey(event => takeover.isToggleEvent(event));
+        } catch (e) {
+            console.error(`notification-sidebar: could not take over the clock menu: ${e.message}`);
+            console.error(e);
+            try {
+                this._takeover?.disable();
+            } catch (e2) {
+                console.error(e2);
+            }
+            this._takeover = null;
+        }
+    }
+
+    // Like the stock shortcut, which switches from any open top-bar menu to
+    // the clock menu: close that menu (and its grab) before opening.
+    _toggleFromShortcut() {
+        const panel = this._panel;
+        if (!panel)
+            return;
+        if (!panel.isOpen)
+            Main.panel.menuManager.activeMenu?.close();
+        panel.toggle();
     }
 
     _refreshCount() {
@@ -171,13 +209,17 @@ export default class NotificationSidebarExtension extends Extension {
 
     // Safe when nothing was built. Each step is isolated so one failure
     // cannot leave the others behind (in particular the modal grab). The
-    // panel goes before the section: closing it calls into the section and
-    // it holds the section's actor.
+    // takeover goes first, so the Shell's own list and shortcut are back
+    // before anything else is torn down. The panel goes before the sections:
+    // closing it calls into the notification section and it holds both
+    // sections' actors.
     _destroyUi() {
         const steps = [
+            () => this._takeover?.disable(),
             () => this._unsubscribeUi?.(),
             () => this._unsubscribeSearch?.(),
             () => this._panel?.destroy(),
+            () => this._media?.destroy(),
             () => this._section?.destroy(),
             () => this._indicator?.destroy(),
         ];
@@ -188,9 +230,11 @@ export default class NotificationSidebarExtension extends Extension {
                 console.error(e);
             }
         }
+        this._takeover = null;
         this._unsubscribeUi = null;
         this._unsubscribeSearch = null;
         this._panel = null;
+        this._media = null;
         this._section = null;
         this._indicator = null;
     }
