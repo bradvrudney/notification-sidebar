@@ -78,7 +78,7 @@ make smoke   # headless Shell in a temporary, isolated session; prints SMOKE OK
 make dev     # a Shell in a window, isolated from your session
 ```
 
-`make smoke` and `make dev` use temporary data, config and cache directories and their own D-Bus session, so they do not touch your settings or installed extensions. `make dev` runs `gnome-shell --devkit`, which needs the Mutter development kit. On Fedora that is the `mutter-devkit` package. The script checks for it and says so if it is missing. Set `NS_DEV_PREFS=1` to also open the preferences window inside it.
+`make smoke` and `make dev` use temporary data, config and cache directories and their own D-Bus session, so they do not touch your settings or installed extensions. `make dev` runs `gnome-shell --devkit`, which needs the Mutter development kit. On Fedora that is the `mutter-devkit` package. The script checks for it and says so if it is missing. The devkit session starts with default GNOME settings; it does not copy yours. Set `NS_DEV_PREFS=1` to also open the preferences window inside it.
 
 After install, work through [docs/manual-test.md](docs/manual-test.md) for the checks that need a real display.
 
