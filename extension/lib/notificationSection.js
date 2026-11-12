@@ -55,7 +55,7 @@ function scrollViewOf(actor) {
 export class NotificationSection {
     /**
      * `closePanel` closes the panel through its own `close()` (which releases
-     * the modal grab); it is called after a row is activated.
+     * the modal grab); it is called after a row is activated or an action runs.
      */
     constructor({store, recorder, settings, sessionId, now, closePanel}) {
         this._store = store;
@@ -79,7 +79,7 @@ export class NotificationSection {
         this._handlers = {
             onActivate: record => this._activate(record),
             onRemove: record => this._remove(record),
-            onAction: (_record, action) => action.activate(),
+            onAction: (_record, action) => this._runAction(action),
             onMore: key => {
                 this._expanded.add(key);
                 this.refresh();
@@ -228,6 +228,16 @@ export class NotificationSection {
                 this._recorder.activate(record.id);
             else
                 lookupApp(record.appId)?.activate();
+        } finally {
+            this._closePanel();
+        }
+    }
+
+    // Like GNOME's message list: the action usually raises a window, which
+    // would otherwise sit behind the open modal panel.
+    _runAction(action) {
+        try {
+            action.activate();
         } finally {
             this._closePanel();
         }

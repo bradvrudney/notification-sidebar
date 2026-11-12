@@ -230,7 +230,12 @@ export default class SmokeDriver extends Extension {
         if (button) {
             await this._click(button);
             this._check('action by pointer', acted.action === 1 && acted.activated === 0 &&
-                panel.isOpen, JSON.stringify(acted));
+                !panel.isOpen && Main.modalCount === 0,
+                `${JSON.stringify(acted)} open ${panel.isOpen} modal ${Main.modalCount}`);
+        }
+        if (!panel.isOpen) {
+            panel.open();
+            await this._wait(700);
         }
 
         // Keyboard: Tab goes row -> its remove button (shown) -> next row.
