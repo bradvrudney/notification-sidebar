@@ -1,0 +1,104 @@
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+import {test, assertEqual, assertTrue} from './harness.js';
+import {loadHistory, saveHistory, DebouncedSaver, historyPath} from '../extension/lib/core/historyFile.js';
+
+const OBJ = {version: 1, lastSeen: 5, records: []};
+
+function withTmp(fn) {
+    const dir = GLib.Dir.make_tmp('nsb-history-XXXXXX');
+    try {
+        return fn(dir);
+    } finally {
+        GLib.spawn_command_line_sync(`rm -rf ${GLib.shell_quote(dir)}`);
+    }
+}
+
+function fakeTimers() {
+    const t = {next: 1, active: new Map(), cleared: [], sets: 0};
+    t.setTimer = (fn, _ms) => {
+        t.sets++;
+        const id = t.next++;
+        t.active.set(id, fn);
+        return id;
+    };
+    t.clearTimer = id => {
+        t.cleared.push(id);
+        t.active.delete(id);
+    };
+    t.fire = () => {
+        for (const [id, fn] of [...t.active]) {
+            t.active.delete(id);
+            fn();
+        }
+    };
+    return t;
+}
+
+test('historyFile: missing file loads as no data and no quarantine', () => withTmp(tmp => {
+    assertEqual(loadHistory(`${tmp}/none.json`), {data: null, quarantined: null});
+}));
+test('historyFile: save then load round trips', () => withTmp(tmp => {
+    const p = `${tmp}/h.json`;
+    assertTrue(saveHistory(p, OBJ) === true);
+    assertEqual(loadHistory(p).data, OBJ);
+}));
+test('historyFile: saved file mode is 0600', () => withTmp(tmp => {
+    const p = `${tmp}/h.json`;
+    saveHistory(p, OBJ);
+    const info = Gio.File.new_for_path(p).query_info('unix::mode', Gio.FileQueryInfoFlags.NONE, null);
+    assertTrue((info.get_attribute_uint32('unix::mode') & 0o777) === 0o600);
+}));
+test('historyFile: save creates nested parent directories', () => withTmp(tmp => {
+    assertTrue(saveHistory(`${tmp}/a/b/h.json`, OBJ) === true);
+}));
+test('historyFile: corrupt file is quarantined and reported as no data', () => withTmp(tmp => {
+    const p = `${tmp}/h.json`;
+    GLib.file_set_contents(p, '{not json');
+    const errors = [];
+    const r = loadHistory(p, {onError: e => errors.push(e)});
+    assertEqual(r.data, null);
+    assertTrue(/\.corrupt-\d+$/.test(r.quarantined));
+    assertTrue(r.quarantined.startsWith(`${p}.corrupt-`));
+    assertTrue(GLib.file_test(r.quarantined, GLib.FileTest.EXISTS));
+    assertTrue(!GLib.file_test(p, GLib.FileTest.EXISTS));
+    assertEqual(errors.length, 1);
+}));
+test('historyFile: unwritable path returns false and does not throw', () => {
+    const errors = [];
+    assertTrue(saveHistory('/proc/nope/h.json', OBJ, {onError: e => errors.push(e)}) === false);
+    assertEqual(errors.length, 1);
+});
+test('historyFile: historyPath is under the user data dir', () => {
+    assertEqual(historyPath(), `${GLib.get_user_data_dir()}/notification-sidebar/history.json`);
+});
+test('debounce: 500 schedules call saveFn 0 times until the timer fires, then once', () => {
+    const t = fakeTimers();
+    let calls = 0;
+    const s = new DebouncedSaver(() => calls++, {setTimer: t.setTimer, clearTimer: t.clearTimer});
+    for (let i = 0; i < 500; i++)
+        s.schedule();
+    assertEqual(calls, 0);
+    t.fire();
+    assertEqual(calls, 1);
+});
+test('debounce: flush runs a pending save once and is then a no-op', () => {
+    const t = fakeTimers();
+    let calls = 0;
+    const s = new DebouncedSaver(() => calls++, {setTimer: t.setTimer, clearTimer: t.clearTimer});
+    s.schedule();
+    s.flush();
+    assertEqual(calls, 1);
+    s.flush();
+    assertEqual(calls, 1);
+});
+test('debounce: destroy flushes pending save and clears the timer', () => {
+    const t = fakeTimers();
+    let calls = 0;
+    const s = new DebouncedSaver(() => calls++, {setTimer: t.setTimer, clearTimer: t.clearTimer});
+    s.schedule();
+    s.destroy();
+    assertEqual(calls, 1);
+    assertEqual(t.cleared.length, 1);
+    assertEqual(t.active.size, 0);
+});
