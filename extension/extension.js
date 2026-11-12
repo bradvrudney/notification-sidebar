@@ -144,6 +144,7 @@ export default class NotificationSidebarExtension extends Extension {
                         }
                     }
                     store.clear();
+                    section.refresh();
                 },
                 onOpenSettings: () => {
                     this._panel?.close();

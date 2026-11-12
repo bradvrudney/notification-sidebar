@@ -9,6 +9,11 @@ import {createItemActor} from './rows.js';
 
 const DEFAULT_VIEW = 'new-then-history';
 
+// While the panel is open, rebuilds caused by store and recorder events (a
+// notification arriving or updating) run at most once per this interval. A
+// full page is up to 200 rows, or every record once "Show more" is pressed.
+const BACKGROUND_REBUILD_INTERVAL_MS = 1000;
+
 const EMPTY_TEXT = {
     'none': 'No notifications yet',
     'no-match': 'Nothing matches',
@@ -67,7 +72,11 @@ export class NotificationSection {
         this._query = '';
         this._expanded = new Set();
         this._heldLastSeen = null;
+        this._open = false;
         this._idleId = 0;
+        this._throttleId = 0;
+        this._dropId = 0;
+        this._lastBuildUs = 0;
         this._destroyed = false;
 
         this.actor = new St.BoxLayout({
@@ -88,12 +97,12 @@ export class NotificationSection {
             getActions: record => this._recorder.getNotification(record.id)?.actions ?? [],
         };
 
-        this._unsubscribeStore = store.subscribe(() => this.refresh());
-        this._unsubscribeRecorder = recorder.subscribe(() => this.refresh());
+        this._unsubscribeStore = store.subscribe(() => this._backgroundRefresh());
+        this._unsubscribeRecorder = recorder.subscribe(() => this._backgroundRefresh());
         this._viewId = settings.connect('changed::view', () => this.refresh());
         this._focusId = global.stage.connect('notify::key-focus', () => this._onKeyFocus());
-
-        this.refresh();
+        // Rows are dropped once the closed panel has finished sliding out.
+        this._mappedId = this.actor.connect('notify::mapped', () => this._scheduleDrop());
     }
 
     setQuery(text) {
@@ -101,11 +110,21 @@ export class NotificationSection {
         this.refresh();
     }
 
-    // While the panel is open the "new" divider stays where it was when the
-    // panel opened, even though records keep arriving.
+    // Rows exist only while the panel is open. Opening builds them at once,
+    // before the panel slides in, so no stale frame shows; closing cancels
+    // pending rebuilds, and the rows are dropped once the panel is hidden.
+    // While open, the "new" divider stays where it was at open, even though
+    // records keep arriving.
     setOpen(open) {
-        this._heldLastSeen = open ? this._store.lastSeen : null;
-        this.refresh();
+        this._open = open;
+        this._cancelPending();
+        if (open) {
+            this._heldLastSeen = this._store.lastSeen;
+            this._rebuild();
+        } else {
+            this._heldLastSeen = null;
+            this._scheduleDrop();
+        }
     }
 
     resetExpanded() {
@@ -113,16 +132,17 @@ export class NotificationSection {
         this.refresh();
     }
 
-    // Store, recorder, setting and query changes can arrive in bursts, and
-    // some fire synchronously from inside a row's click handler (activating
-    // a notification destroys it). Rebuilding at idle coalesces them and
-    // never destroys the actor whose handler is still running.
+    // A user-driven change (view, search, "more", remove, clear all): rebuild
+    // at the next idle. Changes arrive in bursts and some fire synchronously
+    // from inside a row's click handler (activating a notification destroys
+    // it); rebuilding at idle coalesces them and never destroys the actor
+    // whose handler is still running. Nothing is built while closed.
     refresh() {
-        if (this._destroyed || this._idleId)
+        if (this._destroyed || !this._open || this._idleId)
             return;
         this._idleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             this._idleId = 0;
-            if (!this._destroyed)
+            if (!this._destroyed && this._open)
                 this._rebuild();
             return GLib.SOURCE_REMOVE;
         });
@@ -132,16 +152,59 @@ export class NotificationSection {
         if (this._destroyed)
             return;
         this._destroyed = true;
-        if (this._idleId) {
-            GLib.source_remove(this._idleId);
-            this._idleId = 0;
+        this._cancelPending();
+        if (this._dropId) {
+            GLib.source_remove(this._dropId);
+            this._dropId = 0;
         }
         this._unsubscribeStore?.();
         this._unsubscribeRecorder?.();
         this._settings.disconnect(this._viewId);
         global.stage.disconnect(this._focusId);
+        this.actor.disconnect(this._mappedId);
         this.actor.destroy();
         this.actor = null;
+    }
+
+    // A store or recorder event: like `refresh()`, but while open at most
+    // once per BACKGROUND_REBUILD_INTERVAL_MS.
+    _backgroundRefresh() {
+        if (this._destroyed || !this._open || this._idleId || this._throttleId)
+            return;
+        const sinceMs = (GLib.get_monotonic_time() - this._lastBuildUs) / 1000;
+        if (sinceMs >= BACKGROUND_REBUILD_INTERVAL_MS) {
+            this.refresh();
+            return;
+        }
+        this._throttleId = GLib.timeout_add(GLib.PRIORITY_DEFAULT,
+            Math.ceil(BACKGROUND_REBUILD_INTERVAL_MS - sinceMs), () => {
+                this._throttleId = 0;
+                this.refresh();
+                return GLib.SOURCE_REMOVE;
+            });
+    }
+
+    _cancelPending() {
+        if (this._idleId) {
+            GLib.source_remove(this._idleId);
+            this._idleId = 0;
+        }
+        if (this._throttleId) {
+            GLib.source_remove(this._throttleId);
+            this._throttleId = 0;
+        }
+    }
+
+    // At idle, never inside the close that a row's click handler started.
+    _scheduleDrop() {
+        if (this._destroyed || this._open || this._dropId || this.actor.mapped)
+            return;
+        this._dropId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._dropId = 0;
+            if (!this._destroyed && !this._open && !this.actor.mapped)
+                this.actor.destroy_all_children();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _view() {
@@ -162,6 +225,8 @@ export class NotificationSection {
     }
 
     _rebuild() {
+        this._cancelPending();
+        this._lastBuildUs = GLib.get_monotonic_time();
         try {
             const focusIndex = this._focusedRowIndex();
             const vm = buildView(this._view(), this._store.records, this._context());
@@ -244,7 +309,12 @@ export class NotificationSection {
     }
 
     _remove(record) {
-        this._recorder.dismiss(record.id);
+        try {
+            this._recorder.dismiss(record.id);
+        } catch (e) {
+            console.error(e);
+        }
         this._store.remove(record.id);
+        this.refresh();
     }
 }

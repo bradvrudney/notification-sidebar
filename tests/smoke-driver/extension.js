@@ -133,6 +133,19 @@ export default class SmokeDriver extends Extension {
         return counts;
     }
 
+    // Polls until `pred()` holds; returns the elapsed ms, or -1 on timeout.
+    async _waitFor(pred, timeoutMs) {
+        const start = GLib.get_monotonic_time();
+        for (;;) {
+            const elapsed = (GLib.get_monotonic_time() - start) / 1000;
+            if (pred())
+                return elapsed;
+            if (elapsed > timeoutMs)
+                return -1;
+            await this._wait(50);
+        }
+    }
+
     _rowWithTitle(title) {
         return descendants(this._section.actor, hasClass('ns-row'))
             .find(r => texts(r).includes(title)) ?? null;
@@ -159,14 +172,26 @@ export default class SmokeDriver extends Extension {
         await this._wait(1500);
         this._check('no modal left from startup', Main.modalCount === 0, `${Main.modalCount}`);
 
-        // Built while the panel is closed.
+        // Nothing is built while the panel is closed, whatever changes.
+        const rowCount = () => descendants(section(), hasClass('ns-row')).length;
+        settings.set_string('view', 'timeline');
+        store.update(store.records[0].id, {});
+        await this._wait();
+        this._check('no row actors while closed', section().get_n_children() === 0,
+            `${section().get_n_children()} children`);
+        settings.set_string('view', 'new-then-history');
+
+        // Opening builds the rows at once, before the slide-in.
+        panel.open();
         const all = texts(section());
-        this._check('rows built while closed', all.includes('Twin smoke') && all.includes('Gtk smoke'),
-            JSON.stringify(all));
+        this._check('rows built on open, synchronously',
+            all.includes('Twin smoke') && all.includes('Gtk smoke'), JSON.stringify(all));
         this._check('new heading', all.includes('New'), JSON.stringify(all));
         this._check('more-new row', all.includes('Show 1 more new'), JSON.stringify(all));
+        await this._wait(700);
+        this._check('panel opens with grab', panel.isOpen && Main.modalCount > 0);
 
-        // The three views.
+        // The three views, switched while open.
         settings.set_string('view', 'timeline');
         await this._wait();
         this._check('timeline: four cards, nothing folded',
@@ -183,11 +208,6 @@ export default class SmokeDriver extends Extension {
         settings.set_string('view', 'new-then-history');
         await this._wait();
         this._check('new-then-history: three cards', descendants(section(), hasClass('ns-card')).length === 3);
-
-        // Open: modal grab taken.
-        panel.open();
-        await this._wait(700);
-        this._check('panel opens with grab', panel.isOpen && Main.modalCount > 0);
 
         // "Show 1 more new" by pointer.
         const more = descendants(section(), hasClass('ns-more'))[0];
@@ -221,8 +241,13 @@ export default class SmokeDriver extends Extension {
             `records ${before} -> ${store.records.length}, open ${panel.isOpen}`);
 
         // Action button: runs the action once, does not activate the row.
+        // It arrives while open and appears within the background interval.
         const acted = this._notify('Driver action', 'Do it');
-        await this._wait();
+        const arrived = await this._waitFor(() => !!this._rowWithTitle('Driver action'), 3000);
+        this._check('arrival while open shows within 1 s', arrived >= 0 && arrived <= 1000 + 300,
+            `${arrived} ms`);
+        // Let it lay out (and any trailing rebuild run) before pointing at it.
+        await this._wait(1200);
         row = this._rowWithTitle('Driver action');
         const button = row && descendants(row, hasClass('ns-action'))
             .find(b => b.label === 'Do it');
@@ -238,9 +263,27 @@ export default class SmokeDriver extends Extension {
             await this._wait(700);
         }
 
+        // A burst of store events while open: at most one rebuild per second.
+        const realRebuild = this._section._rebuild;
+        let rebuilds = 0;
+        this._section._rebuild = function (...args) {
+            rebuilds++;
+            return realRebuild.apply(this, args);
+        };
+        await this._wait(1100);
+        for (let i = 0; i < 10; i++) {
+            store.update(store.records[0].id, {});
+            await this._wait(100);
+        }
+        await this._wait(1100);
+        delete this._section._rebuild;
+        this._check('store bursts throttled while open', rebuilds >= 1 && rebuilds <= 3,
+            `${rebuilds} rebuilds for 10 events over 1 s`);
+
         // Keyboard: Tab goes row -> its remove button (shown) -> next row.
         const toActivate = this._notify('Driver activate');
-        await this._wait();
+        await this._waitFor(() => !!this._rowWithTitle('Driver activate'), 3000);
+        await this._wait(1200);
         const rows = descendants(section(), hasClass('ns-row'))
             .filter(r => r.has_style_class_name('ns-card') || r.has_style_class_name('ns-line'));
         const main0 = descendants(rows[0], hasClass('ns-row-main'))[0];
@@ -270,6 +313,8 @@ export default class SmokeDriver extends Extension {
         await this._wait(300);
         this._check('escape closes after keyboard remove', !panel.isOpen && Main.modalCount === 0);
         this._check('expanded reset on close', this._section._expanded.size === 0);
+        this._check('rows dropped after close', section().get_n_children() === 0,
+            `${section().get_n_children()} children`);
 
         // Row activation by pointer: activates once, closes the panel, drops the grab.
         panel.open();
@@ -292,6 +337,7 @@ export default class SmokeDriver extends Extension {
             texts(section()).includes('No notifications yet'));
         panel.close();
         await this._wait();
+        this._check('rows dropped at end', rowCount() === 0 && section().get_n_children() === 0);
         this._check('closed at end', !panel.isOpen && Main.modalCount === 0);
     }
 }
