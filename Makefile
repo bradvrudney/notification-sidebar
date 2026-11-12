@@ -21,4 +21,4 @@ smoke:
 	bash scripts/smoke.sh
 
 dev:
-	dbus-run-session -- gnome-shell --devkit
+	bash scripts/dev.sh
