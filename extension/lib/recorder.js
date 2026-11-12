@@ -3,7 +3,7 @@ import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {NotificationDestroyedReason} from 'resource:///org/gnome/shell/ui/messageTray.js';
 
-import {makeRecord, sameNotification} from './core/record.js';
+import {makeRecord, findRecordToLink} from './core/record.js';
 import {toPlainText} from './core/text.js';
 
 function guarded(fn) {
@@ -154,14 +154,13 @@ export class Recorder {
         if (this._notifications.has(n) || n.isTransient)
             return;
         const fields = this._fields(source, n);
-        // Link to an existing record only if no other live notification already owns it,
-        // so identical notifications in the same second stay distinct records.
-        const linked = new Set([...this._notifications.values()].map(e => e.id));
-        let rec = this._store.records.find(r =>
-            !linked.has(r.id) && sameNotification(r, fields, this._sessionId));
+        let rec = findRecordToLink(this._store.records, fields, this._sessionId, this.liveIds());
         if (!rec) {
             rec = makeRecord(fields, this._sessionId, GLib.uuid_string_random);
             this._store.add(rec);
+        } else if (rec.sessionId !== this._sessionId) {
+            // Restored by the Shell at login: adopt it, so it is saved as this session's.
+            this._store.update(rec.id, {sessionId: this._sessionId});
         }
         const id = rec.id;
         const update = (patch) => this._store.update(id, patch);   // false when pruned: ignored

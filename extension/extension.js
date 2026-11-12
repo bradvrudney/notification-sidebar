@@ -3,6 +3,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {HistoryStore} from './lib/core/store.js';
+import {composeSessionId} from './lib/core/session.js';
 import {
     loadHistory, saveHistory, quarantineHistory, DebouncedSaver, historyPath,
 } from './lib/core/historyFile.js';
@@ -24,9 +25,13 @@ function readFile(path) {
     }
 }
 
+// Boot id plus this Shell process's start time: the Shell runs once per
+// login, so this is new at every login and the same across disable/enable.
 export function currentSessionId() {
-    const bootId = readFile('/proc/sys/kernel/random/boot_id');
-    return `${bootId}:${GLib.getenv('XDG_SESSION_ID') ?? ''}`;
+    return composeSessionId(
+        readFile('/proc/sys/kernel/random/boot_id'),
+        readFile('/proc/self/stat'),
+        GLib.getenv('XDG_SESSION_ID'));
 }
 
 export default class NotificationSidebarExtension extends Extension {

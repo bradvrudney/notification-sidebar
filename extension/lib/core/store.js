@@ -1,5 +1,3 @@
-import {sameNotification} from './record.js';
-
 const DAY = 86400;
 
 function validRecord(r) {
@@ -83,10 +81,6 @@ export class HistoryStore {
 
     get(id) {
         return this._entries.find(x => x.rec.id === id)?.rec ?? null;
-    }
-
-    find(fields, sessionId) {
-        return this._sorted().find(e => sameNotification(e.rec, fields, sessionId))?.rec ?? null;
     }
 
     markSeen() {

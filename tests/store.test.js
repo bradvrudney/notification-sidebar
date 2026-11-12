@@ -106,14 +106,6 @@ test('store: add and remove notify; unsubscribe stops notifications', () => {
     s.add(rec());
     assertEqual(n, 2);
 });
-test('store: find returns the stored record, null for another session', () => {
-    const s = new HistoryStore({now: () => 1000});
-    const r = rec({appName: 'App', title: 'T', body: 'B', time: 50});
-    s.add(r);
-    const f = {appName: 'App', title: 'T', body: 'B', isMarkup: false, time: 50};
-    assertEqual(s.find(f, 'cur'), r);
-    assertEqual(s.find(f, 'other'), null);
-});
 test('store: setRetentionDays prunes', () => {
     const s = new HistoryStore({now: () => 10 * 86400, retentionDays: 30});
     s.add(rec({time: 10 * 86400 - 3 * 86400}));
