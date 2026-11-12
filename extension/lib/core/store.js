@@ -1,9 +1,13 @@
 const DAY = 86400;
+// 2100-01-01T00:00:00Z. Well inside what GLib.DateTime can represent, so a
+// stored time can always be formatted.
+const MAX_TIME = 4102444800;
 
 function validRecord(r) {
     return r !== null && typeof r === 'object' &&
         typeof r.id === 'string' && typeof r.title === 'string' &&
-        typeof r.time === 'number' && Number.isFinite(r.time);
+        typeof r.time === 'number' && Number.isFinite(r.time) &&
+        r.time >= 0 && r.time <= MAX_TIME;
 }
 
 export class HistoryStore {

@@ -50,9 +50,10 @@ export default class NotificationSidebarExtension extends Extension {
         this._settings = this.getSettings();
         const opts = {now, retentionDays: this._settings.get_int('retention-days')};
 
-        const {data, quarantined} = loadHistory(path);
+        const {data, quarantined, preserve} = loadHistory(path);
         if (quarantined)
             console.error(`notification-sidebar: moved unreadable history to ${quarantined}`);
+        let canSave = !preserve;
         let store = null;
         if (data) {
             try {
@@ -62,13 +63,31 @@ export default class NotificationSidebarExtension extends Extension {
                 const moved = quarantineHistory(path);
                 if (moved)
                     console.error(`notification-sidebar: moved unusable history to ${moved}`);
+                else
+                    canSave = false;
             }
         }
         this._store = store ?? new HistoryStore(opts);
         this._store.prune();
 
-        this._saver = new DebouncedSaver(() => saveHistory(path, this._store.toJSON()));
-        this._unsubscribeSaver = this._store.subscribe(() => this._saver.schedule());
+        // A history file that could not be moved aside is never overwritten:
+        // this session records in memory only.
+        if (canSave) {
+            this._saver = new DebouncedSaver(() => saveHistory(path, this._store.toJSON()));
+            this._unsubscribeSaver = this._store.subscribe(() => this._saver.schedule());
+            // The Shell does not disable extensions at logout or power-off.
+            // Disconnected in disable().
+            this._shutdownId = global.connect('shutdown', () => {
+                try {
+                    this._saver?.flush();
+                } catch (e) {
+                    console.error(e);
+                }
+            });
+        } else {
+            console.error(`notification-sidebar: could not move ${path} aside; ` +
+                'not saving history this session, so that file is left as it is');
+        }
 
         this._retentionId = this._settings.connect('changed::retention-days', () => {
             try {
@@ -93,10 +112,17 @@ export default class NotificationSidebarExtension extends Extension {
                 return GLib.SOURCE_CONTINUE;
             });
 
+        // The UI goes first: the panel is top chrome above the screen
+        // shield, so tearing it down here is what keeps it off the lock
+        // screen. Disconnected in disable().
         this._sessionModeId = Main.sessionMode.connect('updated', () => {
             try {
-                this._saver?.flush();
                 this._syncUi();
+            } catch (e) {
+                console.error(e);
+            }
+            try {
+                this._saver?.flush();
             } catch (e) {
                 console.error(e);
             }
@@ -244,26 +270,45 @@ export default class NotificationSidebarExtension extends Extension {
         this._indicator = null;
     }
 
+    // Each step is isolated, so one failure cannot skip the later ones (in
+    // particular the final save).
     disable() {
-        this._destroyUi();
-        if (this._sessionModeId) {
-            Main.sessionMode.disconnect(this._sessionModeId);
-            this._sessionModeId = null;
+        const steps = [
+            () => this._destroyUi(),
+            () => {
+                if (this._sessionModeId)
+                    Main.sessionMode.disconnect(this._sessionModeId);
+            },
+            () => {
+                if (this._pruneTimer)
+                    GLib.source_remove(this._pruneTimer);
+            },
+            () => this._recorder?.disable(),
+            () => {
+                if (this._retentionId)
+                    this._settings?.disconnect(this._retentionId);
+            },
+            () => {
+                if (this._shutdownId)
+                    global.disconnect(this._shutdownId);
+            },
+            () => this._unsubscribeSaver?.(),
+            () => this._saver?.destroy(),
+        ];
+        for (const step of steps) {
+            try {
+                step();
+            } catch (e) {
+                console.error(e);
+            }
         }
-        if (this._pruneTimer) {
-            GLib.source_remove(this._pruneTimer);
-            this._pruneTimer = null;
-        }
-        this._recorder?.disable();
+        this._sessionModeId = null;
+        this._pruneTimer = null;
         this._recorder = null;
-        if (this._retentionId) {
-            this._settings?.disconnect(this._retentionId);
-            this._retentionId = null;
-        }
+        this._retentionId = null;
         this._settings = null;
-        this._unsubscribeSaver?.();
+        this._shutdownId = null;
         this._unsubscribeSaver = null;
-        this._saver?.destroy();
         this._saver = null;
         this._store = null;
         this._now = null;

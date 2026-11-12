@@ -136,6 +136,15 @@ test('store: fromJSON drops invalid records', () => {
     ]}, {now: () => 0});
     assertEqual(s.records, [good]);
 });
+test('store: fromJSON drops records whose time is negative, infinite or out of range', () => {
+    const good = rec({id: 'good', time: 1000});
+    const s = HistoryStore.fromJSON({version: 1, lastSeen: 0, records: [
+        rec({id: 'neg', time: -1}), rec({id: 'inf', time: Infinity}), rec({id: 'nan', time: NaN}),
+        rec({id: 'far', time: 1e15}), rec({id: 'past2100', time: 4102444801}), good,
+        rec({id: 'zero', time: 0}),
+    ]}, {now: () => 0});
+    assertEqual(s.records.map(r => r.id), ['good', 'zero']);
+});
 test('fixtures: SAMPLE shape', () => {
     assertEqual(SAMPLE.length, 12);
     assertEqual(SAMPLE.filter(r => r.time > LAST_SEEN).length, 6);

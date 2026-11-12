@@ -1,3 +1,4 @@
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -14,6 +15,21 @@ function guarded(fn) {
             console.error(e);
         }
     };
+}
+
+// Gio crashes the process serialising a themed icon with no names; an
+// app can send one, so it counts as no icon.
+function iconString(icon) {
+    if (!icon)
+        return null;
+    if (icon instanceof Gio.ThemedIcon && icon.get_names().length === 0)
+        return null;
+    return icon.to_string();
+}
+
+// A source may set `datetime` to null; the record then takes the current time.
+function unixTime(n) {
+    return n.datetime?.to_unix() ?? Math.floor(Date.now() / 1000);
 }
 
 export class Recorder {
@@ -141,11 +157,11 @@ export class Recorder {
         return {
             appName: source.title,
             appId,
-            icon: n.gicon?.to_string() ?? source.icon?.to_string() ?? null,
+            icon: iconString(n.gicon) ?? iconString(source.icon) ?? null,
             title: n.title,
             body: n.body,
             isMarkup: n.useBodyMarkup,
-            time: n.datetime.to_unix(),
+            time: unixTime(n),
             urgency: n.urgency,
         };
     }
@@ -168,7 +184,7 @@ export class Recorder {
             n.connect('notify::title', guarded(() => update({title: toPlainText(n.title, false)}))),
             n.connect('notify::body', guarded(() =>
                 update({body: toPlainText(n.body, !!n.useBodyMarkup)}))),
-            n.connect('notify::datetime', guarded(() => update({time: n.datetime.to_unix()}))),
+            n.connect('notify::datetime', guarded(() => update({time: unixTime(n)}))),
             n.connect('action-added', guarded(() => this._emit())),
             n.connect('action-removed', guarded(() => this._emit())),
             n.connect('destroy', guarded(() => this._forget(n, true))),

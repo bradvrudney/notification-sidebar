@@ -10,6 +10,7 @@ function withTmp(fn) {
     try {
         return fn(dir);
     } finally {
+        GLib.spawn_command_line_sync(`chmod -R u+rwx ${GLib.shell_quote(dir)}`);
         GLib.spawn_command_line_sync(`rm -rf ${GLib.shell_quote(dir)}`);
     }
 }
@@ -36,7 +37,7 @@ function fakeTimers() {
 }
 
 test('historyFile: missing file loads as no data and no quarantine', () => withTmp(tmp => {
-    assertEqual(loadHistory(`${tmp}/none.json`), {data: null, quarantined: null});
+    assertEqual(loadHistory(`${tmp}/none.json`), {data: null, quarantined: null, preserve: false});
 }));
 test('historyFile: save then load round trips', () => withTmp(tmp => {
     const p = `${tmp}/h.json`;
@@ -62,7 +63,46 @@ test('historyFile: corrupt file is quarantined and reported as no data', () => w
     assertTrue(r.quarantined.startsWith(`${p}.corrupt-`));
     assertTrue(GLib.file_test(r.quarantined, GLib.FileTest.EXISTS));
     assertTrue(!GLib.file_test(p, GLib.FileTest.EXISTS));
+    assertEqual(r.preserve, false);
     assertEqual(errors.length, 1);
+}));
+test('historyFile: unreadable file is moved aside, not left to be overwritten', () => withTmp(tmp => {
+    const p = `${tmp}/h.json`;
+    saveHistory(p, OBJ);
+    GLib.chmod(p, 0o000);
+    const errors = [];
+    const r = loadHistory(p, {onError: e => errors.push(e)});
+    assertEqual(r.data, null);
+    assertEqual(r.preserve, false);
+    assertTrue(r.quarantined !== null && r.quarantined.startsWith(`${p}.corrupt-`));
+    assertTrue(GLib.file_test(r.quarantined, GLib.FileTest.EXISTS));
+    assertTrue(!GLib.file_test(p, GLib.FileTest.EXISTS));
+    assertTrue(errors.length >= 1);
+}));
+test('historyFile: corrupt file that cannot be moved aside is reported as preserve', () => withTmp(tmp => {
+    const p = `${tmp}/d/h.json`;
+    saveHistory(p, OBJ);
+    GLib.file_set_contents(p, '{not json');
+    GLib.chmod(`${tmp}/d`, 0o500);
+    const errors = [];
+    const r = loadHistory(p, {onError: e => errors.push(e)});
+    assertEqual(r, {data: null, quarantined: null, preserve: true});
+    assertTrue(GLib.file_test(p, GLib.FileTest.EXISTS));
+    assertEqual(errors.length, 2);
+}));
+test('historyFile: unreadable file that cannot be moved aside is reported as preserve', () => withTmp(tmp => {
+    const p = `${tmp}/d/h.json`;
+    saveHistory(p, OBJ);
+    GLib.chmod(p, 0o000);
+    GLib.chmod(`${tmp}/d`, 0o500);
+    const r = loadHistory(p, {onError: () => {}});
+    assertEqual(r, {data: null, quarantined: null, preserve: true});
+    assertTrue(GLib.file_test(p, GLib.FileTest.EXISTS));
+}));
+test('historyFile: readable file loads with preserve false', () => withTmp(tmp => {
+    const p = `${tmp}/h.json`;
+    saveHistory(p, OBJ);
+    assertEqual(loadHistory(p), {data: OBJ, quarantined: null, preserve: false});
 }));
 test('historyFile: unwritable path returns false and does not throw', () => {
     const errors = [];
@@ -118,6 +158,6 @@ test('historyFile: quarantineHistory moves a valid-JSON file aside', () => withT
     saveHistory(p, {version: 99});
     const q = quarantineHistory(p);
     assertTrue(q !== null && q.startsWith(`${p}.corrupt-`));
-    assertEqual(loadHistory(p), {data: null, quarantined: null});
+    assertEqual(loadHistory(p), {data: null, quarantined: null, preserve: false});
     assertEqual(loadHistory(q, {onError: () => {}}).data, {version: 99});
 }));

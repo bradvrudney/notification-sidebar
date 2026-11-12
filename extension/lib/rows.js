@@ -5,6 +5,8 @@ import Pango from 'gi://Pango';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
+import {isSafeIconString} from './core/icon.js';
+
 const FALLBACK_ICON = 'application-x-executable-symbolic';
 const MAX_ACTIONS = 3;
 const BODY_LINES = 2;
@@ -47,8 +49,10 @@ function lookupApp(appId) {
     }
 }
 
+// Unsafe strings (a themed-icon form with no names would crash the Shell
+// inside Gio) fall through to the app's icon.
 function gicon(icon, appId) {
-    if (icon) {
+    if (isSafeIconString(icon)) {
         try {
             return Gio.icon_new_for_string(icon);
         } catch (e) {
@@ -276,8 +280,15 @@ function createGroup(item, handlers) {
     }));
     group.add_child(header);
 
+    // A row that fails to build is skipped; the rest of the block still shows.
     for (const sub of item.rows) {
-        const actor = createItemActor(sub, handlers);
+        let actor;
+        try {
+            actor = createItemActor(sub, handlers);
+        } catch (e) {
+            handlers.onItemError(e);
+            continue;
+        }
         actor.add_style_class_name('in-group');
         group.add_child(actor);
     }
@@ -290,7 +301,9 @@ function createGroup(item, handlers) {
  * `handlers`: `{onActivate(record), onRemove(record), onAction(record, action),
  * onMore(key)}` plus two queries the view model does not answer:
  * `canActivate(item)` (is there a live notification or an app to open) and
- * `getActions(record)` (the live notification's actions).
+ * `getActions(record)` (the live notification's actions), and
+ * `onItemError(error)`, told about a row inside a group that was skipped
+ * because it could not be built.
  */
 export function createItemActor(item, handlers) {
     switch (item.kind) {

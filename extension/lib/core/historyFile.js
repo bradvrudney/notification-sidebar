@@ -5,28 +5,38 @@ export function historyPath() {
     return `${GLib.get_user_data_dir()}/notification-sidebar/history.json`;
 }
 
-// Never throws. Missing file: no data. Unparseable file: renamed aside.
+// Never throws. Returns {data, quarantined, preserve}:
+// - missing file: no data;
+// - unreadable or unparseable file: renamed aside (`quarantined` is the new
+//   path) and no data;
+// - if it could not be renamed aside, `preserve` is true: the file is still
+//   at `path` and must not be overwritten, so the caller must not save.
 export function loadHistory(path, {onError = console.error} = {}) {
+    const unusable = () => {
+        const quarantined = quarantineHistory(path, {onError});
+        return {data: null, quarantined, preserve: quarantined === null};
+    };
     let text;
     try {
         const [ok, bytes] = GLib.file_get_contents(path);
         if (!ok)
-            return {data: null, quarantined: null};
+            return {data: null, quarantined: null, preserve: false};
         text = new TextDecoder().decode(bytes);
     } catch (e) {
-        if (!e.matches?.(GLib.FileError, GLib.FileError.NOENT))
-            onError(`notification-sidebar: cannot read ${path}: ${e.message}`);
-        return {data: null, quarantined: null};
+        if (e.matches?.(GLib.FileError, GLib.FileError.NOENT))
+            return {data: null, quarantined: null, preserve: false};
+        onError(`notification-sidebar: cannot read ${path}: ${e.message}`);
+        return unusable();
     }
 
     try {
         const data = JSON.parse(text);
         if (data === null || typeof data !== 'object' || Array.isArray(data))
             throw new Error('not an object');
-        return {data, quarantined: null};
+        return {data, quarantined: null, preserve: false};
     } catch (e) {
         onError(`notification-sidebar: corrupt history ${path}: ${e.message}`);
-        return {data: null, quarantined: quarantineHistory(path, {onError})};
+        return unusable();
     }
 }
 

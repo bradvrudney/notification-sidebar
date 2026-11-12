@@ -1,5 +1,7 @@
 /* Panel colours follow the dark Shell popover surface. St CSS has no
-   variables, so the values are written out. */
+   variables, so the values are written out; the accent is St's own
+   -st-accent-color (and -st-accent-fg-color for text on it), which follows
+   the system accent colour setting. */
 .ns-bell-count {
     font-size: 11px;
     font-weight: bold;
@@ -53,7 +55,7 @@
 }
 
 .ns-search:focus {
-    box-shadow: inset 0 0 0 2px #3584e4;
+    box-shadow: inset 0 0 0 2px -st-accent-color;
 }
 
 .ns-panel-list {
@@ -85,7 +87,7 @@
 }
 
 .ns-panel-footer:focus {
-    box-shadow: inset 0 0 0 2px #3584e4;
+    box-shadow: inset 0 0 0 2px -st-accent-color;
 }
 
 /* Notification list. Mockup classes: .sect -> .ns-heading, .msg -> .ns-card,
@@ -105,14 +107,14 @@
 }
 
 .ns-heading.new {
-    color: #3584e4;
+    color: -st-accent-color;
 }
 
 .ns-heading-rule {
     min-width: 10px;
     height: 2px;
     border-radius: 2px;
-    background-color: #3584e4;
+    background-color: -st-accent-color;
 }
 
 .ns-time {
@@ -124,7 +126,7 @@
     width: 8px;
     height: 8px;
     border-radius: 4px;
-    background-color: #3584e4;
+    background-color: -st-accent-color;
 }
 
 .ns-row-main {
@@ -135,7 +137,7 @@
 .ns-more:focus,
 .ns-remove:focus,
 .ns-action:focus {
-    box-shadow: inset 0 0 0 2px #3584e4;
+    box-shadow: inset 0 0 0 2px -st-accent-color;
 }
 
 .ns-remove {
@@ -293,8 +295,8 @@
 }
 
 .ns-pill {
-    background-color: #3584e4;
-    color: #ffffff;
+    background-color: -st-accent-color;
+    color: -st-accent-fg-color;
     font-size: 12px;
     font-weight: bold;
     border-radius: 99px;

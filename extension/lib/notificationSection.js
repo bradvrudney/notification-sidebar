@@ -78,6 +78,7 @@ export class NotificationSection {
         this._dropId = 0;
         this._lastBuildUs = 0;
         this._destroyed = false;
+        this._loggedItemErrors = new Set();
 
         this.actor = new St.BoxLayout({
             style_class: 'ns-section',
@@ -95,6 +96,7 @@ export class NotificationSection {
             },
             canActivate: item => item.isLive || !!lookupApp(item.record.appId),
             getActions: record => this._recorder.getNotification(record.id)?.actions ?? [],
+            onItemError: e => this._logItemError(e),
         };
 
         this._unsubscribeStore = store.subscribe(() => this._backgroundRefresh());
@@ -239,8 +241,11 @@ export class NotificationSection {
                     x_align: Clutter.ActorAlign.CENTER,
                 }));
             }
-            for (const item of vm.items)
-                this.actor.add_child(createItemActor(item, this._handlers));
+            for (const item of vm.items) {
+                const actor = this._createItem(item);
+                if (actor)
+                    this.actor.add_child(actor);
+            }
 
             if (focusIndex !== null)
                 this._restoreFocus(focusIndex);
@@ -248,6 +253,26 @@ export class NotificationSection {
             console.error(`notification-sidebar: could not draw the list: ${e.message}`);
             console.error(e);
         }
+    }
+
+    // One item that fails to build is skipped; the rest still render. Each
+    // distinct error is logged once, not on every rebuild.
+    _createItem(item) {
+        try {
+            return createItemActor(item, this._handlers);
+        } catch (e) {
+            this._handlers.onItemError(e);
+            return null;
+        }
+    }
+
+    _logItemError(e) {
+        const key = `${e?.message}`;
+        if (this._loggedItemErrors.has(key))
+            return;
+        this._loggedItemErrors.add(key);
+        console.error(`notification-sidebar: skipped a row that could not be drawn: ${key}`);
+        console.error(e);
     }
 
     // Index of the row holding keyboard focus, or null when focus is not in
