@@ -1,3 +1,4 @@
+import Atk from 'gi://Atk';
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import St from 'gi://St';
@@ -72,6 +73,9 @@ export class SidebarPanel {
         this._buildFooter();
 
         Main.layoutManager.addTopChrome(this._actor);
+        // Lets Tab / Shift+Tab move focus between the search entry, the menu
+        // button and the Do Not Disturb row, as ModalDialog and PopupMenu do.
+        global.focus_manager.add_group(this._actor);
         this._monitorsId = Main.layoutManager.connect('monitors-changed', () => this._reposition());
         this._reposition();
 
@@ -227,6 +231,7 @@ export class SidebarPanel {
         this._sections.clear();
 
         try {
+            global.focus_manager.remove_group(this._actor);
             this._menu?.destroy();
             this._menu = null;
             Main.layoutManager.removeChrome(this._actor);
@@ -353,6 +358,13 @@ export class SidebarPanel {
             this._host.add_child(actor);
     }
 
+    _syncChecked(footer) {
+        if (this._switch.state)
+            footer.add_accessible_state(Atk.StateType.CHECKED);
+        else
+            footer.remove_accessible_state(Atk.StateType.CHECKED);
+    }
+
     _buildFooter() {
         const footer = new St.BoxLayout({
             style_class: 'ns-panel-footer',
@@ -360,6 +372,7 @@ export class SidebarPanel {
             can_focus: true,
             track_hover: true,
             accessible_name: 'Do Not Disturb',
+            accessible_role: Atk.Role.CHECK_BOX,
         });
         footer.add_child(new St.Label({
             text: 'Do Not Disturb',
@@ -375,7 +388,9 @@ export class SidebarPanel {
         const click = new Clutter.ClickGesture();
         click.connect('may-recognize', () => {
             const target = global.stage.get_event_actor(click.get_point_event(0));
-            return !(target && this._switch.contains(target));
+            // A press on the bare track is picked as the switch itself; only
+            // the knob (its one reactive child) handles its own press.
+            return !(target && target !== this._switch && this._switch.contains(target));
         });
         click.connect('recognize', () => this._switch.toggle());
         footer.add_action(click);
@@ -397,6 +412,7 @@ export class SidebarPanel {
             syncing = true;
             try {
                 this._switch.state = !this._desktop.get_boolean('show-banners');
+                this._syncChecked(footer);
             } finally {
                 syncing = false;
             }
@@ -405,8 +421,10 @@ export class SidebarPanel {
         sync();
         this._switch.connect('notify::state', () => {
             if (!syncing)
+                this._syncChecked(footer);
                 try {
-                    this._desktop.set_boolean('show-banners', !this._switch.state);
+                    if (!this._desktop.set_boolean('show-banners', !this._switch.state))
+                        sync();  // key not writable: no `changed` will follow
                 } catch (e) {
                     console.error(e);
                     sync();  // the setting refused: show what it really holds
