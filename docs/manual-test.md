@@ -29,7 +29,7 @@ Run after `make install`, a logout and login, and `gnome-extensions enable notif
 - [ ] Timeline: newest first, with headings "New since HH:MM", "Earlier today", "Yesterday" and a heading per older day.
 - [ ] By app: one block per app, ordered by newest item, with icon, name, an "N new" pill and a time. Older items are behind "Show N earlier".
 - [ ] New, then history: new items are full cards (first three, then "Show N more new"); seen items are one compact line each under day headings.
-- [ ] Each view matches the mockup in `.superpowers/brainstorm/255498-1794512223/content/panel-layouts-v2.html` in layout, spacing and the accent dot on new rows.
+- [ ] In each view, spacing is even, text is not clipped, and new rows carry the accent-colour dot.
 - [ ] Switch views from the three-dots menu. The layout changes at once and the menu shows the chosen view.
 - [ ] In settings, change View while the panel is open. The panel's layout follows, and the menu's choice follows.
 - [ ] A live notification with buttons is a full card in every view, new or seen.

@@ -42,7 +42,7 @@ To remove it:
 make uninstall
 ```
 
-Turn off `notification-badge@icsanyi.mailbox.org` if you have it. It overlaps with the bell, and this extension does not touch it.
+Turn off any other extension that adds a notification bell or count to the top bar, such as `notification-badge@icsanyi.mailbox.org`. It would overlap with this one's bell, and this extension does not touch it.
 
 ## Settings
 
@@ -82,4 +82,12 @@ make dev     # a Shell in a window, isolated from your session
 
 After install, work through [docs/manual-test.md](docs/manual-test.md) for the checks that need a real display.
 
-The design is in [docs/superpowers/specs/2026-11-12-notification-sidebar-design.md](docs/superpowers/specs/2026-11-12-notification-sidebar-design.md).
+The design is in [docs/design.md](docs/design.md), and the survey of the macOS and Windows panels it draws on is in [docs/feature-inventory.md](docs/feature-inventory.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Licence
+
+[MIT](LICENSE).

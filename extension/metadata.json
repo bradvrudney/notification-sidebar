@@ -2,6 +2,7 @@
   "uuid": "notification-sidebar@bradvrudney.github.io",
   "name": "Notification Sidebar",
   "description": "A sidebar that shows notifications and their history.",
+  "url": "https://github.com/bradvrudney/notification-sidebar",
   "shell-version": ["51"],
   "session-modes": ["user", "unlock-dialog"],
   "settings-schema": "org.gnome.shell.extensions.notification-sidebar"

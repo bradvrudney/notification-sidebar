@@ -8,7 +8,7 @@ decide what a GNOME Shell extension should replicate.
 **Confidence markers**
 
 - no marker — confirmed against the vendor's current support page, or (GNOME column) against the
-  GNOME Shell 51 source shipped on this machine
+  GNOME Shell 51 source shipped with Fedora 45
 - `[K]` — from general knowledge of the product, not re-verified against a current source
 - `[news]` — from tech press only; may be Insider-only or changed since
 
@@ -144,7 +144,7 @@ has an equivalent Quick Settings menu.
 
 ## 10. What GNOME 51 already gives us
 
-Read from the Shell source on this machine (`messageList.js`, `messageTray.js`, `calendar.js`,
+Read from the Shell source shipped with Fedora 45 (`messageList.js`, `messageTray.js`, `calendar.js`,
 `dateMenu.js`, `status/doNotDisturb.js`):
 
 - Per-app grouping into expandable stacks, clear per group and clear all
