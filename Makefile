@@ -1,7 +1,7 @@
 UUID = notification-sidebar@bradvrudney.github.io
 DEST ?= $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 
-.PHONY: test schemas install uninstall smoke dev
+.PHONY: test schemas install uninstall smoke dev screenshots
 
 test:
 	TZ=UTC gjs -m tests/run.js
@@ -22,3 +22,6 @@ smoke:
 
 dev:
 	bash scripts/dev.sh
+
+screenshots:
+	bash scripts/screenshots.sh

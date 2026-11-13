@@ -1,0 +1,6 @@
+{
+  "uuid": "ns-screenshot-driver@test.invalid",
+  "name": "Notification Sidebar screenshot driver",
+  "description": "Test-only. Fills the sidebar with sample entries and saves the README screenshots. Does nothing outside scripts/screenshots.sh.",
+  "shell-version": ["51"]
+}

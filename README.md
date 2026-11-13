@@ -1,8 +1,21 @@
 # Notification sidebar
 
-A GNOME Shell extension that keeps a log of your notifications and shows it in a panel on the right edge of the screen. It targets GNOME Shell 51 on Wayland.
+**Step away from your desk. Come back to everything you missed, in one place.**
 
-GNOME's own list lives in the clock menu, keeps at most 10 items per app and is emptied at logout. This extension records every notification, keeps it for a number of days (7 by default, 1 to 90) across logout and reboot, and shows the history in one place.
+GNOME shows a notification for a few seconds, keeps ten per app in the clock menu, and forgets all of them when you log out. Notification sidebar remembers. It records every notification, keeps it for days across logout and reboot, and puts the whole history in a panel on the right edge of the screen. Press Super+V and the first thing you see is what arrived since you last looked.
+
+![The sidebar open on a GNOME desktop: new notifications as cards with their buttons, earlier ones as compact lines under day headings](docs/screenshots/desktop.png)
+
+It is a GNOME Shell extension for GNOME Shell 51 on Wayland. Your history stays in a file on your own machine; nothing is sent anywhere.
+
+## Three ways to read it
+
+The same history, laid out the way you think. Switch from the panel's menu at any time.
+
+| New, then history | Timeline | By app |
+|---|---|---|
+| ![New notifications as full cards, older ones as one line each](docs/screenshots/view-new-then-history.png) | ![One stream of full cards, newest first, under time headings](docs/screenshots/view-timeline.png) | ![One block per app with a count of new items](docs/screenshots/view-by-app.png) |
+| What is new gets room; what you have seen shrinks to a line. | One stream, newest first, with nothing folded away. | One block per app, so a noisy app stays in its own box. |
 
 ## What it does
 
@@ -76,9 +89,10 @@ The extension stays loaded on the lock screen, only so that it keeps recording. 
 make test    # unit tests under gjs
 make smoke   # headless Shell in a temporary, isolated session; prints SMOKE OK
 make dev     # a Shell in a window, isolated from your session
+make screenshots   # regenerate docs/screenshots from an isolated headless Shell
 ```
 
-`make smoke` and `make dev` use temporary data, config and cache directories and their own D-Bus session, so they do not touch your settings or installed extensions. `make dev` runs `gnome-shell --devkit`, which needs the Mutter development kit. On Fedora that is the `mutter-devkit` package. The script checks for it and says so if it is missing. The devkit session starts with default GNOME settings; it does not copy yours. Set `NS_DEV_PREFS=1` to also open the preferences window inside it.
+`make smoke`, `make dev` and `make screenshots` use temporary data, config and cache directories and their own D-Bus session, so they do not touch your settings or installed extensions. `make dev` runs `gnome-shell --devkit`, which needs the Mutter development kit. On Fedora that is the `mutter-devkit` package. The script checks for it and says so if it is missing. The devkit session starts with default GNOME settings; it does not copy yours. Set `NS_DEV_PREFS=1` to also open the preferences window inside it.
 
 After install, work through [docs/manual-test.md](docs/manual-test.md) for the checks that need a real display.
 
