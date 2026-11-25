@@ -37,7 +37,9 @@ fi
 TMP="$NS_SMOKE_TMP"
 SHELL_PID=""
 MPRIS_PID=""
+WINDOW_PID=""
 cleanup() {
+    [ -n "$WINDOW_PID" ] && kill "$WINDOW_PID" 2>/dev/null && wait "$WINDOW_PID" 2>/dev/null
     [ -n "$MPRIS_PID" ] && kill "$MPRIS_PID" 2>/dev/null && wait "$MPRIS_PID" 2>/dev/null
     [ -n "$SHELL_PID" ] && kill "$SHELL_PID" 2>/dev/null && wait "$SHELL_PID" 2>/dev/null
 }
@@ -174,14 +176,21 @@ for _ in $(seq 1 20); do
 done
 [ -n "$mpris" ] || fail "fake media player never appeared on the bus"
 
+# A plain window on the nested compositor, for the dock checks (maximise,
+# fullscreen, keyboard focus). The driver waits for it; the trap kills it.
+WAYLAND_DISPLAY=ns-smoke GDK_BACKEND=wayland GSK_RENDERER=cairo \
+    gjs -m "$ROOT/tests/fake-window.js" >"$TMP/window.log" 2>&1 &
+WINDOW_PID=$!
+
 # Drive the list with virtual pointer and keyboard input: clicks, hover,
 # Tab order, keyboard remove, views, search, more, clear all, then the media
-# section, Super+V and the clock-menu takeover across disable/enable. The
-# extension reloads the history checked above. The driver ends with "done".
+# section, the docked (pinned) panel, Super+V and the clock-menu takeover
+# across disable/enable. The extension reloads the history checked above.
+# The driver ends with "done".
 gnome-extensions enable "$UUID" || fail "enable for driver failed"
 sleep 2
 gnome-extensions enable "$DRIVER" || fail "driver enable failed"
-for _ in $(seq 1 120); do
+for _ in $(seq 1 240); do
     grep -q '\[ns-smoke-driver\] done' "$TMP/shell.log" && break
     sleep 0.5
 done
@@ -190,11 +199,16 @@ echo "smoke: driver checks:"
 grep -o '\[ns-smoke-driver\] .*' "$TMP/shell.log"
 if grep -q '\[ns-smoke-driver\] FAIL' "$TMP/shell.log"; then fail "driver check failed"; fi
 grep -q '\[ns-smoke-driver\] ok closed at end' "$TMP/shell.log" || fail "driver stopped early"
+grep -q '\[ns-smoke-driver\] ok dock checks finished' "$TMP/shell.log" \
+    || fail "driver stopped before the dock checks finished"
 grep -q '\[ns-smoke-driver\] ok takeover checks finished' "$TMP/shell.log" \
     || fail "driver stopped before the takeover checks finished"
 kill -0 "$MPRIS_PID" 2>/dev/null && fail "fake media player still running: the driver did not quit it"
 wait "$MPRIS_PID" 2>/dev/null
 MPRIS_PID=""
+kill "$WINDOW_PID" 2>/dev/null
+wait "$WINDOW_PID" 2>/dev/null
+WINDOW_PID=""
 gnome-extensions disable "$DRIVER" || fail "driver disable failed"
 gnome-extensions disable "$UUID" || fail "disable after driver failed"
 sleep 1

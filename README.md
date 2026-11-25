@@ -21,6 +21,7 @@ The same history, laid out the way you think. Switch from the panel's menu at an
 
 - Records each notification as it arrives. Transient notifications are skipped.
 - Opens a panel from a bell button in the top bar, or with Super+V. Esc, a click outside, the bell or Super+V closes it.
+- Can be pinned, with the pin button in the panel's header or Keep docked in settings. A pinned panel stays open on the right edge and reserves that strip of the screen, so maximised and tiled windows stop at its edge instead of going under it. See [Pinned](#pinned).
 - Shows what arrived since the panel was last open. The bell shows the count.
 - Offers three views of the same history: Timeline, By app, and New, then history. Choose one from the panel's menu (the three dots) or in settings.
 - Searches the history by app name, title and body.
@@ -64,6 +65,19 @@ Open them from the panel's menu, or with `gnome-extensions prefs notification-si
 - View: Timeline, By app, or New, then history.
 - Keep history for: 1 to 90 days.
 - Show search.
+- Keep docked: the same as the pin button in the panel's header.
+
+## Pinned
+
+A pinned panel is docked rather than popped up. It behaves differently in these ways:
+
+- Esc, a click outside it, clicking a notification and pressing a notification's button do not close it. Esc clears the search and gives the keyboard back to your window.
+- The bell and Super+V put it away and bring it back. Putting it away gives the strip back to your windows. It comes back by itself at the next login, not when you unlock the screen.
+- It is hidden while the overview is open and while a window is fullscreen on its monitor.
+- New notifications stay marked as new until you have looked at the panel, which it takes to mean: the pointer spent a second on it and then left, or you pressed Esc in it. A pointer that only crosses it does not count, and neither does one left parked on it for more than 30 seconds. Putting the panel away with the bell or Super+V also counts.
+- Locking the screen does not count as looking: what arrived before you locked is still marked as new when you unlock.
+- To reach it from the keyboard, press Ctrl+Alt+Tab and choose Notifications.
+- Unpinning with the pin button leaves the panel open as an ordinary popup. Unpinning in settings closes it.
 
 ## Where history is kept
 
@@ -78,7 +92,7 @@ The extension stays loaded on the lock screen, only so that it keeps recording. 
 - Notifications that arrive while the extension is disabled, or before it loads at login, are not recorded. Those still in the tray when it loads are picked up.
 - Buttons on entries from a previous session cannot work.
 - A new notification can take up to one second to appear in a panel that is already open.
-- Pressing a notification's button closes the panel.
+- Pressing a notification's button closes the panel, unless it is pinned.
 - The panel opens on the primary monitor only.
 - No widgets, no Do Not Disturb schedules, no change to how banners look, no inline reply, no syncing between machines.
 - It is not published on extensions.gnome.org. Staying loaded on the lock screen would draw extra review there.

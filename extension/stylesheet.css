@@ -31,6 +31,26 @@
     color: #b6b6bc;
 }
 
+.ns-panel-pin {
+    color: #b6b6bc;
+    padding: 5px;
+    border-radius: 99px;
+}
+
+.ns-panel-pin StIcon {
+    icon-size: 16px;
+}
+
+.ns-panel-pin:hover,
+.ns-panel-pin:focus {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.ns-panel-pin:checked {
+    background-color: -st-accent-color;
+    color: -st-accent-fg-color;
+}
+
 .ns-panel-more {
     color: #b6b6bc;
     font-weight: 800;

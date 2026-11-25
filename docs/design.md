@@ -94,12 +94,14 @@ Approach 1 was chosen for layout control and single-package install.
 | **Recorder** | Subscribes to the Shell's message tray, turns each notification into a record, keeps a map from record to live notification object | Yes (the only module that touches `messageTray` internals) |
 | **Store** | Holds records in memory, loads and saves the history file, applies retention | No |
 | **View models** | Pure functions: records + last-seen time + search text → the rows and section headings for each of the three views | No |
+| **Dock geometry** | Pure functions: where the panel goes on the monitor, the strip a docked panel reserves, and whether a docked panel has been looked at | No |
 | **Panel** | The sliding right-edge surface: header, search, list, footer; hosts sections | Yes |
 | **Indicator** | Bell button with new-item count in the top bar | Yes |
 | **Shell integration** | Hides the clock menu's message list and dot, rebinds Super+V, restores both on disable | Yes |
 | **Preferences** | Settings window | Adw/GTK only |
 
-Store and view models take no Shell imports so they can be unit-tested under plain `gjs`.
+Store, view models and dock geometry take no Shell imports so they can be unit-tested under
+plain `gjs`.
 
 ### Recording
 
@@ -154,6 +156,17 @@ last-seen time; it is derived, not stored per record.
   stays where it was when it opened.
 - The bell's count is the number of records newer than last-seen. Zero shows a plain bell.
 - There is no per-item read state.
+- A docked panel (see below) does not close, so it needs its own rule. Last-seen is set to
+  "now", and the divider moves, when the panel has been looked at: the pointer was over it, in
+  use, for at least one second and then left, or Esc was pressed in it. A pointer that only
+  crosses it changes nothing. Neither does one left parked on it: after 30 seconds with no
+  movement, scroll or press over the panel, what came before is forgotten, so the movement
+  that finally takes the pointer away is judged on its own. (People park the pointer at the
+  screen edge to get it out of the way.) Putting a docked panel away with the bell or Super+V
+  sets last-seen as closing a popup does.
+- A docked panel that goes away because the interface is torn down (the screen locked, the
+  extension was disabled) does **not** set last-seen. The screen usually locks because nobody
+  is there; what arrived before it locked must still be new on return.
 
 ### Panel
 
@@ -164,9 +177,44 @@ last-seen time; it is derived, not stored per record.
 - Top to bottom: title with new count and "⋯" menu; search field (when enabled); scrolling
   section area; footer with the Do Not Disturb switch (bound to the standard GNOME setting).
 - "⋯" menu: the three view names as a radio choice, Clear all history, Settings.
+- A pin button sits in the header, left of "⋯". It shows and changes the `pinned` setting.
 - The scrolling area hosts **sections**. A section is a small internal contract: a title, an
   actor, and an order. Version 1 has two: media controls and notifications. A future widget
   area is another section. This is internal structure, not a public plugin API.
+
+### Docked (pinned) panel
+
+With `pinned` on, the panel is docked instead of popped up.
+
+- **No modal grab.** It stays up; Esc, a click outside, activating a row and running an action
+  do not close it. Esc clears the search and drops key focus, which makes the Shell focus a
+  window again. Clicking the search field focuses it and typing works, because the Shell
+  focuses the stage whenever one of its actors takes key focus.
+- **Reserved space.** A second, invisible actor the height of the monitor and the width of the
+  panel plus a margin each side sits against the right edge of the primary monitor and is
+  tracked by the layout manager with `affectsStruts`. The Shell turns that into a right-hand
+  strut, so the work area ends at the strip and maximised and tiled windows keep clear of it.
+  The Shell keeps a strut for as long as its actor is tracked, visible or not, so the actor is
+  added to the chrome when the panel docks and removed when it closes or undocks. The strut is
+  a separate actor so that the panel's slide animation does not move it.
+- **Stacking.** A popup panel sits above everything. A docked panel is restacked just under
+  the Shell's top window group, with the rest of the Shell's chrome, so popups, system dialogs
+  and the screenshot interface are over it.
+- **Hidden, not closed,** while the overview is up (the overview is laid out across the whole
+  monitor) and while a window is fullscreen on the primary monitor. The strut stays through
+  both, so windows do not move.
+- **The bell and Super+V** close and reopen it. Closed, it releases the strip. A pinned panel
+  opens by itself when the interface is built (login, unlock) unless the user had closed it;
+  that is remembered for the life of the extension, not across logins.
+- **Changing over.** Pinning opens a closed panel, and docks an open one in place. Unpinning
+  from the panel's own button leaves it up as a popup. Unpinning from the settings window
+  closes it: a popup would take the pointer and keyboard from that window.
+- **Keyboard.** The panel is registered with the Ctrl+Alt+Tab switcher, which lists it while
+  it is on screen.
+- **Staying current.** A docked panel can be open across midnight; the list is redrawn when
+  the local date changes, so "Today" and "Yesterday" stay true.
+- If the strut cannot be registered the panel still docks and the error is logged; it then
+  overlaps windows.
 
 ### Rows
 
@@ -230,13 +278,19 @@ GSettings schema, with an Adwaita preferences window:
 | `view` | `timeline`, `by-app`, `new-then-history` | `new-then-history` |
 | `retention-days` | 1 to 90 | 7 |
 | `show-search` | boolean | true |
+| `pinned` | boolean | false |
 
 The "⋯" menu's view choice writes `view` directly; there is no separate "default view".
 
 ### Testing
 
-- Unit tests under `gjs` for the store (load, save, retention, corrupt file) and the three view
-  models (grouping, headings, new/seen boundaries, search), with fixed clocks.
+- Unit tests under `gjs` for the store (load, save, retention, corrupt file), the three view
+  models (grouping, headings, new/seen boundaries, search) with fixed clocks, and the dock
+  geometry.
+- A headless smoke test (`make smoke`) that drives the real extension in an isolated Shell with
+  virtual pointer and keyboard input. For the docked panel it uses a real window to check that
+  a maximised window stops at the strip, that typing reaches the search field, and that
+  fullscreen hides the panel.
 - Manual checklist run in a development Shell session, driven by `notify-send` and a GTK test
   app: recording, live buttons, app exit, 10-per-app overflow, logout and back in, lock and
   unlock, disable and re-enable restoring the clock menu and Super+V.

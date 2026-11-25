@@ -20,5 +20,10 @@
       <default>true</default>
       <summary>Show the search field</summary>
     </key>
+    <key name="pinned" type="b">
+      <default>false</default>
+      <summary>Keep the sidebar docked</summary>
+      <description>The sidebar stays open on the right edge of the primary monitor and windows keep clear of it.</description>
+    </key>
   </schema>
 </schemalist>

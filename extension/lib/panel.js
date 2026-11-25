@@ -1,13 +1,23 @@
 import Atk from 'gi://Atk';
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-const PANEL_WIDTH = 344;
-const MARGIN = 6;
+import {panelGeometry, LookTracker, MARGIN} from './core/dock.js';
+
 const ANIMATION_MS = 200;
+
+// Events that show the pointer is in use over the panel.
+const POINTER_ACTIVITY = new Set([
+    Clutter.EventType.MOTION,
+    Clutter.EventType.SCROLL,
+    Clutter.EventType.BUTTON_PRESS,
+    Clutter.EventType.TOUCH_BEGIN,
+    Clutter.EventType.TOUCH_UPDATE,
+]);
 
 const VIEWS = [
     ['timeline', 'Timeline'],
@@ -23,12 +33,31 @@ function guarded(fn) {
     }
 }
 
+// The panel has two ways of being open. Unpinned it is a popup: it holds a
+// modal grab and closes on Escape, a press outside it or the toggle shortcut.
+// Pinned (the `pinned` setting) it is docked: no grab, it stays up, and an
+// invisible strip along the right edge of the primary monitor is registered
+// with the Shell as a strut so windows keep clear of it. A docked panel is
+// hidden, not closed, while the overview is up or a window is fullscreen on
+// its monitor.
 export class SidebarPanel {
-    constructor({settings, onOpened, onClosed}) {
+    /**
+     * `onClosed({seen, byUser})`: `byUser` is false when the panel went away
+     * because it was destroyed; `seen` is false when that happened to a
+     * docked panel, which nobody need have been looking at.
+     * `onSeen()` is called when a docked panel has been looked at.
+     */
+    constructor({settings, onOpened, onClosed, onSeen}) {
         this._settings = settings;
         this._onOpened = onOpened;
         this._onClosed = onClosed;
+        this._onSeen = onSeen;
         this._open = false;
+        this._shown = false;
+        this._docked = false;
+        this._pinned = settings.get_boolean('pinned');
+        this._look = new LookTracker();
+        this._strutTracked = false;
         this._grab = null;
         this._sections = new Map();
         this._searchListeners = new Set();
@@ -41,19 +70,32 @@ export class SidebarPanel {
             style_class: 'ns-panel',
             orientation: Clutter.Orientation.VERTICAL,
             reactive: true,
+            track_hover: true,
             visible: false,
         });
+        // Never painted and never picked: it only gives the Shell a box on
+        // the screen edge to make a strut from. Tracked while docked.
+        this._strut = new Clutter.Actor();
         this._actor.connect('key-press-event', (_a, event) => {
             if (event.get_key_symbol() === Clutter.KEY_Escape) {
-                this.close();
+                if (this._docked)
+                    this._leaveKeyboard();
+                else
+                    this.close();
                 return Clutter.EVENT_STOP;
             }
             return Clutter.EVENT_PROPAGATE;
         });
+        this._actor.connect('notify::hover', () => this._onHover());
         // The modal grab routes every event through the grab actor, so a press
-        // outside the panel shows up here.
+        // outside the panel shows up here. Docked there is no grab: only
+        // events for the panel itself arrive, and none of them closes it.
         this._actor.connect('captured-event', (_a, event) => {
             const type = event.type();
+            if (this._docked && POINTER_ACTIVITY.has(type))
+                this._look.activity(GLib.get_monotonic_time() / 1000);
+            if (!this._grab)
+                return Clutter.EVENT_PROPAGATE;
             // The Shell runs no keybinding under this grab (action mode
             // NONE), so the toggle shortcut is matched here to close.
             if (this._open && type === Clutter.EventType.KEY_PRESS &&
@@ -82,10 +124,21 @@ export class SidebarPanel {
         this._buildFooter();
 
         Main.layoutManager.addTopChrome(this._actor);
-        // Lets Tab / Shift+Tab move focus between the search entry, the menu
-        // button and the Do Not Disturb row, as ModalDialog and PopupMenu do.
-        global.focus_manager.add_group(this._actor);
+        // Makes the panel a focus group, so Tab / Shift+Tab move between the
+        // search entry, the header buttons, the rows and the Do Not Disturb
+        // row, and lists it in the Ctrl+Alt+Tab switcher while it is on
+        // screen: the keyboard's way into a docked panel.
+        Main.ctrlAltTabManager.addGroup(this._actor, 'Notifications',
+            'preferences-system-notifications-symbolic');
         this._monitorsId = Main.layoutManager.connect('monitors-changed', () => this._reposition());
+        this._topBar = Main.layoutManager.panelBox;
+        this._topBarId = this._topBar.connect('notify::height', () => this._reposition());
+        this._themeContext = St.ThemeContext.get_for_stage(global.stage);
+        this._scaleId = this._themeContext.connect('notify::scale-factor', () => this._reposition());
+        const syncShown = () => this._syncShown();
+        this._overviewIds = ['showing', 'hiding', 'hidden']
+            .map(signal => Main.overview.connect(signal, syncShown));
+        this._fullscreenId = global.display.connect('in-fullscreen-changed', syncShown);
         this._reposition();
 
         // Created after the actor so the popup is stacked above the panel.
@@ -93,13 +146,22 @@ export class SidebarPanel {
 
         this._settingsIds.push(
             this._settings.connect('changed::show-search', () => this._syncSearchVisible()),
-            this._settings.connect('changed::view', () => this._syncViewOrnaments()));
+            this._settings.connect('changed::view', () => this._syncViewOrnaments()),
+            this._settings.connect('changed::pinned',
+                () => this._applyPinned(this._settings.get_boolean('pinned'))));
         this._syncSearchVisible();
         this._syncViewOrnaments();
+        this._pin.checked = this._pinned;
     }
 
     get isOpen() {
         return this._open;
+    }
+
+    // Open and docked, whether or not the overview or a fullscreen window
+    // is hiding it just now.
+    get isDocked() {
+        return this._docked;
     }
 
     get searchText() {
@@ -154,59 +216,33 @@ export class SidebarPanel {
         if (this._open || this._destroyed)
             return;
         this._reposition();
-        const grab = Main.pushModal(this._actor);
-        this._grab = grab;
+        if (this._pinned)
+            this._dock();
+        else
+            this._grabInput();
         this._open = true;
 
         guarded(() => this._onOpened?.());
 
-        this._actor.remove_all_transitions();
-        this._actor.visible = true;
-        if (St.Settings.get().enable_animations) {
-            this._actor.translation_x = this._slideDistance();
-            this._actor.ease({
-                translation_x: 0,
-                duration: ANIMATION_MS,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            });
-        } else {
-            this._actor.translation_x = 0;
-        }
+        this._setShown(!this._suppressed(), 'slide');
     }
 
-    close({animate = true} = {}) {
+    close({animate = true, teardown = false} = {}) {
         if (!this._open)
             return;
         this._open = false;
+        const wasDocked = this._docked;
 
         guarded(() => this._menu?.close({animate: false}));
-        if (this._grab) {
-            const grab = this._grab;
-            this._grab = null;
-            try {
-                Main.popModal(grab);
-            } catch (e) {
-                console.error(e);
-            }
-        }
+        this._releaseGrab();
+        if (wasDocked)
+            guarded(() => this._undock());
         this._entry.text = '';
+        this._look.reset();
 
-        this._actor.remove_all_transitions();
-        if (animate && St.Settings.get().enable_animations) {
-            this._actor.ease({
-                translation_x: this._slideDistance(),
-                duration: ANIMATION_MS,
-                mode: Clutter.AnimationMode.EASE_IN_QUAD,
-                onStopped: () => {
-                    if (!this._open && !this._destroyed)
-                        this._actor.visible = false;
-                },
-            });
-        } else {
-            this._actor.visible = false;
-        }
+        this._setShown(false, 'slide', animate);
 
-        guarded(() => this._onClosed?.());
+        guarded(() => this._onClosed?.({seen: !(teardown && wasDocked), byUser: !teardown}));
     }
 
     toggle() {
@@ -216,27 +252,215 @@ export class SidebarPanel {
             this.open();
     }
 
+    // The user acted on something in the panel (activated a row, ran an
+    // action, opened settings). A popup closes, so the window that comes up
+    // is not behind a modal panel; a docked panel is in nobody's way.
+    dismiss() {
+        if (!this._docked)
+            this.close();
+    }
+
     destroy() {
         if (this._destroyed)
             return;
         try {
-            this.close({animate: false});
+            this.close({animate: false, teardown: true});
         } finally {
             this._destroyed = true;
             this._teardown();
         }
     }
 
-    _teardown() {
-        if (this._grab) {
-            const grab = this._grab;
-            this._grab = null;
-            guarded(() => Main.popModal(grab));
+    // `pinned` is the mode from now on. An open panel changes over at once;
+    // pinning opens a closed one. Unpinning from the panel's own button
+    // (`fromPanel`) leaves it up as a popup; unpinning from anywhere else
+    // closes it, since a popup would take the pointer and keyboard away from
+    // whatever the user is in.
+    _applyPinned(pinned, {fromPanel = false} = {}) {
+        if (this._destroyed)
+            return;
+        this._pinned = pinned;
+        this._pin.checked = pinned;
+        if (pinned) {
+            if (this._open)
+                this._setDocked(true);
+            else
+                this.open();
+        } else if (this._docked) {
+            if (fromPanel)
+                this._setDocked(false);
+            else
+                this.close();
         }
+    }
+
+    _setDocked(docked) {
+        if (!this._open || this._docked === docked)
+            return;
+        if (docked) {
+            this._releaseGrab();
+            this._dock();
+        } else {
+            this._undock();
+            this._grabInput();
+        }
+        this._syncShown();
+    }
+
+    _grabInput() {
+        // Above everything, popups included.
+        Main.uiGroup.set_child_above_sibling(this._actor, null);
+        this._grab = Main.pushModal(this._actor);
+    }
+
+    _releaseGrab() {
+        if (!this._grab)
+            return;
+        const grab = this._grab;
+        this._grab = null;
+        try {
+            Main.popModal(grab);
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    _dock() {
+        this._docked = true;
+        // With the rest of the Shell's own chrome: under popups, system
+        // dialogs and the screenshot interface rather than over them.
+        Main.uiGroup.set_child_below_sibling(this._actor, global.top_window_group);
+        // If the strut cannot be set up the panel still docks; it then
+        // overlaps windows instead of keeping them clear.
+        guarded(() => this._trackStrut());
+    }
+
+    _trackStrut() {
+        if (this._strutTracked)
+            return;
+        Main.layoutManager.addChrome(this._strut, {affectsStruts: true});
+        this._strutTracked = true;
+        this._strut.show();
+    }
+
+    _undock() {
+        this._docked = false;
+        this._untrackStrut();
+        Main.uiGroup.set_child_above_sibling(this._actor, null);
+    }
+
+    // The Shell keeps a strut for as long as its actor is tracked, visible
+    // or not, so the actor is taken out of the chrome altogether.
+    _untrackStrut() {
+        if (!this._strutTracked)
+            return;
+        this._strutTracked = false;
+        Main.layoutManager.removeChrome(this._strut);
+    }
+
+    // A docked panel gives way to the overview, which is laid out across
+    // the whole monitor, and to a fullscreen window on its monitor. The
+    // strut stays, so windows do not move.
+    _suppressed() {
+        return this._docked && (Main.overview.visibleTarget ||
+            !!Main.layoutManager.primaryMonitor?.inFullscreen);
+    }
+
+    _syncShown() {
+        if (this._open && !this._destroyed)
+            this._setShown(!this._suppressed(), 'fade');
+    }
+
+    // Puts the panel on or off the screen, sliding from the edge or fading.
+    _setShown(show, how, animate = true) {
+        if (show === this._shown)
+            return;
+        this._shown = show;
+        const actor = this._actor;
+        const animated = animate && St.Settings.get().enable_animations;
+        actor.remove_all_transitions();
+        if (show) {
+            actor.visible = true;
+            if (!animated) {
+                actor.translation_x = 0;
+                actor.opacity = 255;
+                return;
+            }
+            if (how === 'slide') {
+                actor.opacity = 255;
+                actor.translation_x = this._slideDistance();
+            } else {
+                actor.translation_x = 0;
+                actor.opacity = 0;
+            }
+            actor.ease({
+                translation_x: 0,
+                opacity: 255,
+                duration: ANIMATION_MS,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
+        } else if (animated) {
+            actor.ease({
+                ...how === 'slide' ? {translation_x: this._slideDistance()} : {opacity: 0},
+                duration: ANIMATION_MS,
+                mode: Clutter.AnimationMode.EASE_IN_QUAD,
+                onStopped: () => {
+                    if (!this._shown && !this._destroyed)
+                        actor.visible = false;
+                },
+            });
+        } else {
+            actor.visible = false;
+        }
+    }
+
+    // Docked, the pointer spending a moment on the panel and then leaving
+    // is what closing is to a popup: what is in it has been looked at. A
+    // pointer left parked on the panel is not looking (see LookTracker).
+    _onHover() {
+        const now = GLib.get_monotonic_time() / 1000;
+        if (this._actor.hover)
+            this._look.activity(now);
+        else if (this._look.leave(now) && this._docked)
+            this._acknowledge();
+    }
+
+    // Escape in a docked panel: clear the search and hand the keyboard back
+    // to the windows (the Shell focuses one when the stage loses key focus).
+    _leaveKeyboard() {
+        this._entry.text = '';
+        global.stage.set_key_focus(null);
+        this._acknowledge();
+    }
+
+    _acknowledge() {
+        guarded(() => this._onSeen?.());
+    }
+
+    _teardown() {
+        this._releaseGrab();
+        guarded(() => this._untrackStrut());
 
         if (this._monitorsId) {
             Main.layoutManager.disconnect(this._monitorsId);
             this._monitorsId = null;
+        }
+        if (this._topBarId) {
+            this._topBar.disconnect(this._topBarId);
+            this._topBarId = null;
+        }
+        this._topBar = null;
+        if (this._scaleId) {
+            this._themeContext.disconnect(this._scaleId);
+            this._scaleId = null;
+        }
+        this._themeContext = null;
+        for (const id of this._overviewIds ?? [])
+            Main.overview.disconnect(id);
+        this._overviewIds = [];
+        if (this._fullscreenId) {
+            global.display.disconnect(this._fullscreenId);
+            this._fullscreenId = null;
         }
         for (const id of this._settingsIds)
             this._settings.disconnect(id);
@@ -256,13 +480,15 @@ export class SidebarPanel {
         this._sections.clear();
 
         try {
-            global.focus_manager.remove_group(this._actor);
+            Main.ctrlAltTabManager.removeGroup(this._actor);
             this._menu?.destroy();
             this._menu = null;
             Main.layoutManager.removeChrome(this._actor);
         } finally {
             this._actor.destroy();
             this._actor = null;
+            this._strut.destroy();
+            this._strut = null;
         }
     }
 
@@ -272,14 +498,17 @@ export class SidebarPanel {
 
     _reposition() {
         const monitor = Main.layoutManager.primaryMonitor;
-        if (!monitor)
+        if (!monitor || this._destroyed)
             return;
-        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-        const width = PANEL_WIDTH * scale;
-        const margin = MARGIN * scale;
-        const top = monitor.y + Main.layoutManager.panelBox.height + margin;
-        this._actor.set_position(monitor.x + monitor.width - width - margin, top);
-        this._actor.set_size(width, Math.max(0, monitor.y + monitor.height - margin - top));
+        const {card, strip} = panelGeometry({
+            monitor,
+            topBarHeight: Main.layoutManager.panelBox.height,
+            scale: St.ThemeContext.get_for_stage(global.stage).scale_factor,
+        });
+        this._actor.set_position(card.x, card.y);
+        this._actor.set_size(card.width, card.height);
+        this._strut.set_position(strip.x, strip.y);
+        this._strut.set_size(strip.width, strip.height);
     }
 
     _buildHeader() {
@@ -296,13 +525,39 @@ export class SidebarPanel {
         });
         header.add_child(this._count);
 
+        // The setting is what holds the state; the button shows it and
+        // asks for a change.
+        this._pin = new St.Button({
+            style_class: 'ns-panel-pin',
+            icon_name: 'view-pin-symbolic',
+            toggle_mode: true,
+            accessible_name: 'Keep docked',
+            can_focus: true,
+            x_expand: true,
+            x_align: Clutter.ActorAlign.END,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._pin.connect('clicked', () => {
+            const pinned = this._pin.checked;
+            // Applied first, as a change made from the panel; the setting's
+            // own `changed` then finds nothing left to do.
+            this._applyPinned(pinned, {fromPanel: true});
+            let written = false;
+            try {
+                written = this._settings.set_boolean('pinned', pinned);
+            } catch (e) {
+                console.error(e);
+            }
+            if (!written)
+                this._applyPinned(this._settings.get_boolean('pinned'), {fromPanel: true});
+        });
+        header.add_child(this._pin);
+
         this._more = new St.Button({
             style_class: 'ns-panel-more',
             label: '⋯',
             accessible_name: 'More options',
             can_focus: true,
-            x_expand: true,
-            x_align: Clutter.ActorAlign.END,
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._more.connect('clicked', () => this._menu.toggle());

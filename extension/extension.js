@@ -98,6 +98,9 @@ export default class NotificationSidebarExtension extends Extension {
         });
 
         this._now = now;
+        // True while a pinned sidebar is closed because the user closed it;
+        // kept across the interface being torn down and rebuilt.
+        this._dockHidden = false;
         this._sessionId = currentSessionId();
         this._recorder = new Recorder({store: this._store, sessionId: this._sessionId});
         this._recorder.enable();
@@ -152,20 +155,33 @@ export default class NotificationSidebarExtension extends Extension {
                 settings: this._settings,
                 sessionId: this._sessionId,
                 now: this._now,
-                closePanel: () => this._panel?.close(),
+                dismissPanel: () => this._panel?.dismiss(),
             });
             const section = this._section;
             this._panel = new SidebarPanel({
                 settings: this._settings,
-                onOpened: () => section.setOpen(true),
-                onClosed: () => {
+                onOpened: () => {
+                    this._dockHidden = false;
+                    section.setOpen(true);
+                },
+                // A docked panel torn down with the interface (the screen
+                // locked) was not necessarily being looked at: what arrived
+                // since it last was stays new.
+                onClosed: ({seen, byUser}) => {
+                    if (byUser)
+                        this._dockHidden = this._settings.get_boolean('pinned');
                     section.resetExpanded();
                     section.setOpen(false);
+                    if (seen)
+                        store.markSeen();
+                },
+                onSeen: () => {
                     store.markSeen();
+                    section.syncSeen();
                 },
             });
             this._panel.addSection({id: 'notifications', order: 10, actor: section.actor});
-            this._media = new MediaSection({closePanel: () => this._panel?.close()});
+            this._media = new MediaSection({dismissPanel: () => this._panel?.dismiss()});
             this._panel.addSection({id: 'media', order: 0, actor: this._media.actor});
             this._unsubscribeSearch = this._panel.onSearchChanged(text => section.setQuery(text));
             this._panel.setMenuHandlers({
@@ -182,7 +198,7 @@ export default class NotificationSidebarExtension extends Extension {
                     section.refresh();
                 },
                 onOpenSettings: () => {
-                    this._panel?.close();
+                    this._panel?.dismiss();
                     this.openPreferences();
                 },
             });
@@ -190,6 +206,10 @@ export default class NotificationSidebarExtension extends Extension {
             Main.panel.addToStatusArea(this.uuid, this._indicator, 0, 'right');
             this._unsubscribeUi = store.subscribe(() => this._refreshCount());
             this._refreshCount();
+            // A pinned sidebar comes back with the interface (login, unlock)
+            // unless the user had put it away with the bell or the shortcut.
+            if (this._settings.get_boolean('pinned') && !this._dockHidden)
+                this._panel.open();
             console.log('[notification-sidebar] interface built');
         } catch (e) {
             console.error(`notification-sidebar: could not build the interface: ${e.message}`);
@@ -312,6 +332,7 @@ export default class NotificationSidebarExtension extends Extension {
         this._saver = null;
         this._store = null;
         this._now = null;
+        this._dockHidden = false;
         this._sessionId = null;
         console.log('[notification-sidebar] disabled');
     }

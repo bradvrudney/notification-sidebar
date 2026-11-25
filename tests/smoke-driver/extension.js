@@ -19,6 +19,8 @@ const TAG = '[ns-smoke-driver]';
 const SETTLE_MS = 400;
 // Served by tests/fake-mpris-player.js, started by scripts/smoke.sh.
 const MPRIS_NAME = 'org.mpris.MediaPlayer2.NsSmoke';
+// Title of the window tests/fake-window.js opens, started by scripts/smoke.sh.
+const WINDOW_TITLE = 'ns-smoke-window';
 const STOCK_TRAY_MODES =
     Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW | Shell.ActionMode.POPUP;
 
@@ -210,6 +212,15 @@ export default class SmokeDriver extends Extension {
         await this._wait(1500);
         this._check('no modal left from startup', Main.modalCount === 0, `${Main.modalCount}`);
 
+        // The helper window is for the dock checks; out of the way until then.
+        const findWindow = () => global.get_window_actors().map(a => a.meta_window)
+            .find(w => w.title === WINDOW_TITLE) ?? null;
+        await this._waitFor(() => !!findWindow(), 10000);
+        this._window = findWindow();
+        this._check('helper window present', !!this._window);
+        this._window?.minimize();
+        await this._wait();
+
         // Nothing is built while the panel is closed, whatever changes.
         const rowCount = () => descendants(section(), hasClass('ns-row')).length;
         settings.set_string('view', 'timeline');
@@ -383,7 +394,236 @@ export default class SmokeDriver extends Extension {
         this._check('rows dropped at end', rowCount() === 0 && section().get_n_children() === 0);
         this._check('closed at end', !panel.isOpen && Main.modalCount === 0);
 
+        await this._dockChecks(ext);
         await this._takeoverChecks(ext);
+    }
+
+    // Pinned: the panel docks (no grab), reserves a strip along the right
+    // edge, and stays up through everything that closes a popup.
+    async _dockChecks(ext) {
+        const settings = ext._settings;
+        const store = ext._store;
+        let panel = ext._panel;
+        const win = this._window;
+        const section = () => this._section.actor;
+        const monitor = Main.layoutManager.primaryMonitor;
+        const workWidth = () =>
+            Main.layoutManager.getWorkAreaForMonitor(Main.layoutManager.primaryIndex).width;
+        const clickAt = async (x, y) => {
+            await this._pointTo(x, y);
+            this._pointer.notify_button(GLib.get_monotonic_time(),
+                Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
+            await this._wait(50);
+            this._pointer.notify_button(GLib.get_monotonic_time(),
+                Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
+            await this._wait();
+        };
+        const state = () => `open ${panel.isOpen} docked ${panel.isDocked} ` +
+            `visible ${panel._actor.visible} modal ${Main.modalCount} work ${workWidth()}`;
+
+        // The pointer was last over where the panel is; a docked panel
+        // appearing under it would count as being looked at.
+        await this._pointTo(2, 400);
+        const full = workWidth();
+        this._check('work area is the full width before pinning', full === monitor.width,
+            `${full} of ${monitor.width}`);
+
+        settings.set_boolean('pinned', true);
+        await this._wait(700);
+        const strip = panel._strut.width;
+        this._check('pinning opens the panel docked, without a grab',
+            panel.isOpen && panel.isDocked && panel._actor.visible && panel._actor.opacity === 255 &&
+            Main.modalCount === 0 && panel._pin.checked, state());
+        this._check('docked panel reserves a strip on the right',
+            strip === panel._actor.width + 12 && workWidth() === full - strip,
+            `strip ${strip}, ${state()}`);
+        this._check('docked panel is offered in the Ctrl+Alt+Tab switcher',
+            Main.ctrlAltTabManager._items.some(i => i.root === panel._actor));
+
+        // New while docked: stays new until the panel has been looked at.
+        const acted = this._notify('Docked one');
+        const arrived = await this._waitFor(() => !!this._rowWithTitle('Docked one'), 3000);
+        this._check('arrival shows in the docked panel', arrived >= 0 && store.newCount() === 1,
+            `${arrived} ms, ${store.newCount()} new`);
+        await this._wait(1200);
+        await clickAt(2, 400);
+        this._check('a click outside leaves it docked',
+            panel.isOpen && panel._actor.visible && store.newCount() === 1, state());
+        await this._moveTo(panel._actor);
+        await this._pointTo(2, 400);
+        this._check('pointer crossing the docked panel does not mark seen',
+            store.newCount() === 1, `${store.newCount()} new`);
+        // Parked: over the panel with no activity for longer than the idle
+        // limit (shortened here; it is 30 s).
+        const idleMs = panel._look.idleMs;
+        panel._look.idleMs = 400;
+        await this._moveTo(panel._actor);
+        await this._wait(1200);
+        await this._pointTo(2, 400);
+        await this._wait();
+        panel._look.idleMs = idleMs;
+        this._check('pointer left parked on the docked panel does not mark seen',
+            store.newCount() === 1, `${store.newCount()} new`);
+        await this._moveTo(panel._actor);
+        await this._wait(1200);
+        await this._pointTo(2, 400);
+        await this._wait();
+        this._check('pointer resting on the docked panel, then leaving, marks seen',
+            store.newCount() === 0 && this._section._heldLastSeen === store.lastSeen &&
+            !descendants(section(), hasClass('ns-heading')).some(h => h.has_style_class_name('new')),
+            `${store.newCount()} new, held ${this._section._heldLastSeen}, seen ${store.lastSeen}`);
+
+        // Activating a row leaves a docked panel up.
+        const row = this._rowWithTitle('Docked one');
+        const main = row && descendants(row, hasClass('ns-row-main'))[0];
+        this._check('docked row present', !!main, JSON.stringify(texts(section())));
+        if (main) {
+            await this._click(main);
+            this._check('activating a row leaves it docked',
+                acted.activated === 1 && panel.isOpen && panel.isDocked && Main.modalCount === 0,
+                `${JSON.stringify(acted)} ${state()}`);
+        }
+        await this._pointTo(2, 400);
+
+        // A real window: it keeps clear of the strip, the keyboard goes to
+        // the panel and back, and fullscreen hides the panel.
+        if (win) {
+            win.unminimize();
+            win.activate(global.get_current_time());
+            await this._wait(700);
+            this._check('helper window has focus', global.display.focus_window === win);
+            try {
+                win.maximize();
+            } catch (_e) {
+                win.maximize(3);  // older mutter: Meta.MaximizeFlags.BOTH
+            }
+            await this._wait(700);
+            let frame = win.get_frame_rect();
+            this._check('maximised window stops at the docked panel',
+                frame.x === monitor.x && frame.width === full - strip,
+                `frame x ${frame.x} w ${frame.width}, want w ${full - strip}`);
+
+            await this._click(panel._entry);
+            await this._key(Clutter.KEY_d);
+            this._check('typing reaches the docked search field without a grab',
+                panel._entry.text === 'd' && Main.modalCount === 0,
+                `text "${panel._entry.text}" modal ${Main.modalCount}`);
+            await this._key(Clutter.KEY_Escape);
+            await this._wait(300);
+            this._check('escape leaves it docked, clears the search, gives the keyboard back',
+                panel.isOpen && panel.isDocked && panel._entry.text === '' &&
+                global.display.focus_window === win,
+                `text "${panel._entry.text}" focus ${global.display.focus_window?.title} ${state()}`);
+            await this._pointTo(2, 400);
+
+            win.make_fullscreen();
+            await this._wait(900);
+            this._check('fullscreen window hides the docked panel',
+                monitor.inFullscreen && panel.isOpen && !panel._actor.visible, state());
+            win.unmake_fullscreen();
+            await this._wait(900);
+            this._check('docked panel is back after fullscreen',
+                !monitor.inFullscreen && panel._actor.visible && panel._actor.opacity === 255, state());
+
+            panel.close();
+            await this._wait(700);
+            frame = win.get_frame_rect();
+            this._check('closing the docked panel gives the strip back',
+                workWidth() === full && frame.width === full,
+                `frame w ${frame.width}, ${state()}`);
+            panel.open();
+            await this._wait(700);
+            frame = win.get_frame_rect();
+            this._check('reopening docks again',
+                panel.isDocked && workWidth() === full - strip && frame.width === full - strip,
+                `frame w ${frame.width}, ${state()}`);
+            win.minimize();
+            await this._wait();
+        }
+
+        // The bell's and the shortcut's toggle: put away, then back, docked.
+        await this._superV();
+        await this._wait(300);
+        this._check('super+v puts the docked panel away',
+            !panel.isOpen && !panel._actor.visible && workWidth() === full && ext._dockHidden, state());
+        await this._superV();
+        await this._wait(300);
+        this._check('super+v brings it back docked',
+            panel.isOpen && panel.isDocked && Main.modalCount === 0 &&
+            workWidth() === full - strip && !ext._dockHidden, state());
+
+        // The overview hides it without closing it or moving windows.
+        Main.overview.show();
+        await this._wait(1200);
+        this._check('overview hides the docked panel, strip kept',
+            Main.overview.visible && panel.isOpen && !panel._actor.visible &&
+            workWidth() === full - strip, state());
+        Main.overview.hide();
+        await this._wait(1200);
+        this._check('docked panel is back after the overview',
+            !Main.overview.visible && panel._actor.visible && panel._actor.opacity === 255, state());
+
+        // The interface is torn down and rebuilt when the screen locks and
+        // unlocks. What arrived before the lock stays new; the panel comes
+        // back docked.
+        this._notify('Docked two');
+        await this._waitFor(() => store.newCount() === 1, 3000);
+        ext._destroyUi();
+        await this._wait();
+        this._check('teardown of a docked panel does not mark seen, frees the strip',
+            store.newCount() === 1 && workWidth() === full,
+            `${store.newCount()} new, work ${workWidth()}`);
+        ext._buildUi();
+        await this._wait(700);
+        panel = ext._panel;
+        this._section = ext._section;
+        this._check('rebuilt interface comes back docked',
+            !!panel && panel.isOpen && panel.isDocked && workWidth() === full - strip &&
+            store.newCount() === 1, panel ? state() : 'no panel');
+        // ...unless the user had put it away.
+        await this._superV();
+        await this._wait(300);
+        ext._destroyUi();
+        await this._wait();
+        ext._buildUi();
+        await this._wait(700);
+        panel = ext._panel;
+        this._section = ext._section;
+        this._check('a docked panel the user put away stays away over a rebuild',
+            !!panel && !panel.isOpen && workWidth() === full, panel ? state() : 'no panel');
+
+        // Unpinning from settings closes it; the panel's own pin button
+        // changes it over in place.
+        await this._superV();
+        await this._wait(300);
+        this._check('docked again before unpinning', panel.isOpen && panel.isDocked, state());
+        settings.set_boolean('pinned', false);
+        await this._wait(700);
+        this._check('unpinning from settings closes the panel',
+            !panel.isOpen && Main.modalCount === 0 && workWidth() === full && !panel._pin.checked,
+            state());
+        panel.open();
+        await this._wait(700);
+        this._check('unpinned, it opens as a popup again',
+            panel.isOpen && !panel.isDocked && Main.modalCount > 0 && workWidth() === full, state());
+        await this._click(panel._pin);
+        await this._wait(300);
+        this._check('pin button docks the open panel',
+            panel.isOpen && panel.isDocked && Main.modalCount === 0 && panel._pin.checked &&
+            settings.get_boolean('pinned') && workWidth() === full - strip, state());
+        await this._click(panel._pin);
+        await this._wait(300);
+        this._check('pin button again leaves it open as a popup',
+            panel.isOpen && !panel.isDocked && Main.modalCount > 0 && !panel._pin.checked &&
+            !settings.get_boolean('pinned') && workWidth() === full, state());
+        await this._key(Clutter.KEY_Escape);
+        await this._wait(300);
+        this._check('escape closes the popup again', !panel.isOpen && Main.modalCount === 0, state());
+
+        settings.reset('pinned');
+        store.clear();
+        await this._pointTo(2, 400);
+        this._check('dock checks finished', true);
     }
 
     async _mediaChecks(ext, panel) {

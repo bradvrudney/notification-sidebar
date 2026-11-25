@@ -45,6 +45,13 @@ export function buildPrefsPage(settings) {
     settings.bind('show-search', search, 'active', Gio.SettingsBindFlags.DEFAULT);
     group.add(search);
 
+    const pinned = new Adw.SwitchRow({
+        title: 'Keep docked',
+        subtitle: 'Stay open on the right edge, with windows kept clear of it',
+    });
+    settings.bind('pinned', pinned, 'active', Gio.SettingsBindFlags.DEFAULT);
+    group.add(pinned);
+
     // Follows changes made elsewhere, such as the panel's menu.
     const viewId = settings.connect('changed::view', syncView);
     page.connect('destroy', () => settings.disconnect(viewId));

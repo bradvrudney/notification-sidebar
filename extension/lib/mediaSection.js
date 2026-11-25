@@ -8,11 +8,11 @@ import {MediaMessage} from 'resource:///org/gnome/shell/ui/messageList.js';
 // clock menu's list that normally shows them is hidden by the takeover.
 export class MediaSection {
     /**
-     * `closePanel` is called after a message is clicked: the Shell raises the
-     * player's window, which would otherwise sit behind the modal panel.
+     * `dismissPanel` is called after a message is clicked: the Shell raises
+     * the player's window, which would otherwise sit behind a modal panel.
      */
-    constructor({closePanel} = {}) {
-        this._closePanel = closePanel;
+    constructor({dismissPanel} = {}) {
+        this._dismissPanel = dismissPanel;
         this._messages = new Map();
 
         this.actor = new St.BoxLayout({
@@ -52,7 +52,7 @@ export class MediaSection {
             const message = new MediaMessage(player);
             message.connect_after('clicked', () => {
                 try {
-                    this._closePanel?.();
+                    this._dismissPanel?.();
                 } catch (e) {
                     console.error(e);
                 }

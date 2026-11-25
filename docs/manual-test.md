@@ -54,7 +54,27 @@ Run after `make install`, a logout and login, and `gnome-extensions enable notif
 - [ ] Esc, a click outside, the bell and Super+V each close the panel.
 - [ ] Opening the panel and closing it clears the count on the bell. The divider stays where it was while the panel was open.
 - [ ] With animations turned off in GNOME settings, the panel appears and disappears without sliding.
-- [ ] Tab and Shift+Tab move focus through the search field, the three-dots button, the rows and the Do Not Disturb row, in that order and back. Space and Enter toggle Do Not Disturb on that row.
+- [ ] Tab and Shift+Tab move focus through the search field, the pin button, the three-dots button, the rows and the Do Not Disturb row, and back. Space and Enter toggle Do Not Disturb on that row.
+
+## Pinned
+
+- [ ] Open the panel and click the pin button in its header. The button is highlighted, the panel stays, and a maximised window shrinks to stop at the panel's left edge. Nothing is hidden behind the panel.
+- [ ] Tile a window to the right half. It stops at the panel too.
+- [ ] Click in a window, press Esc, click a notification, press a notification's button. The panel stays open each time, and the window that comes up is not covered.
+- [ ] Click the search field and type. The list filters. Press Esc. The search clears and typing goes to your window again.
+- [ ] Press Ctrl+Alt+Tab. Notifications is offered; choosing it puts keyboard focus in the panel.
+- [ ] Click the bell, or press Super+V. The panel goes away and the window takes the full width. Again, and it is back, docked.
+- [ ] Open the overview. The panel is hidden and windows have not changed size. Leave the overview and the panel is back.
+- [ ] Make a window fullscreen (a video, F11 in a browser). The panel is hidden. Leave fullscreen and it is back.
+- [ ] With the pointer away from the panel, send a notification. It is marked new and the bell counts it. Sweep the pointer across the panel without stopping. Still new. Rest the pointer on the panel for more than a second and move away. The count clears and the entry is no longer new.
+- [ ] Leave the pointer on the panel without touching the mouse for a minute, send a notification, then move the pointer straight off the panel. The entry is still marked new.
+- [ ] Send a notification, do not touch the panel, lock the screen and unlock. The panel is back, docked, and the entry is still marked new.
+- [ ] Put the panel away with the bell, lock and unlock. It stays away. Log out and in. It is back, docked.
+- [ ] In settings, turn Keep docked off. The panel closes and windows take the full width. Turn it on. The panel opens, docked.
+- [ ] With the panel docked, click the pin button. It stays open as an ordinary popup: Esc or a click outside closes it.
+- [ ] Leave the panel docked past midnight. The day headings are right the next morning.
+- [ ] With a second monitor attached, the panel docks on the primary monitor and windows there keep clear of it; windows on the other monitor are unaffected.
+- [ ] A system dialog (for example the power-off prompt) dims the docked panel along with the rest of the screen.
 
 ## Do Not Disturb
 

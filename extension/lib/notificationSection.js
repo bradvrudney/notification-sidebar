@@ -4,7 +4,7 @@ import Shell from 'gi://Shell';
 import St from 'gi://St';
 import {ensureActorVisibleInScrollView} from 'resource:///org/gnome/shell/misc/animationUtils.js';
 
-import {buildView, VIEWS} from './core/viewModels.js';
+import {buildView, dayKeyOf, VIEWS} from './core/viewModels.js';
 import {createItemActor} from './rows.js';
 
 const DEFAULT_VIEW = 'new-then-history';
@@ -13,6 +13,11 @@ const DEFAULT_VIEW = 'new-then-history';
 // notification arriving or updating) run at most once per this interval. A
 // full page is up to 200 rows, or every record once "Show more" is pressed.
 const BACKGROUND_REBUILD_INTERVAL_MS = 1000;
+
+// A docked panel can stay open for days. Day headings ("Today", "Yesterday")
+// depend on the date, so while open the date is checked this often and the
+// list redrawn when it has changed.
+const DAY_CHECK_SECONDS = 60;
 
 const EMPTY_TEXT = {
     'none': 'No notifications yet',
@@ -59,16 +64,17 @@ function scrollViewOf(actor) {
 
 export class NotificationSection {
     /**
-     * `closePanel` closes the panel through its own `close()` (which releases
-     * the modal grab); it is called after a row is activated or an action runs.
+     * `dismissPanel` is called after a row is activated or an action runs;
+     * it goes through the panel's own `dismiss()`, which closes a popup
+     * panel (releasing its modal grab) and leaves a docked one up.
      */
-    constructor({store, recorder, settings, sessionId, now, closePanel}) {
+    constructor({store, recorder, settings, sessionId, now, dismissPanel}) {
         this._store = store;
         this._recorder = recorder;
         this._settings = settings;
         this._sessionId = sessionId;
         this._now = now;
-        this._closePanel = closePanel;
+        this._dismissPanel = dismissPanel;
         this._query = '';
         this._expanded = new Set();
         this._heldLastSeen = null;
@@ -76,6 +82,8 @@ export class NotificationSection {
         this._idleId = 0;
         this._throttleId = 0;
         this._dropId = 0;
+        this._dayId = 0;
+        this._builtDay = null;
         this._lastBuildUs = 0;
         this._destroyed = false;
         this._loggedItemErrors = new Set();
@@ -120,12 +128,34 @@ export class NotificationSection {
     setOpen(open) {
         this._open = open;
         this._cancelPending();
+        this._stopDayCheck();
         if (open) {
             this._heldLastSeen = this._store.lastSeen;
             this._rebuild();
+            this._dayId = GLib.timeout_add_seconds(GLib.PRIORITY_LOW, DAY_CHECK_SECONDS, () => {
+                if (dayKeyOf(this._now()) !== this._builtDay)
+                    this.refresh();
+                return GLib.SOURCE_CONTINUE;
+            });
         } else {
             this._heldLastSeen = null;
             this._scheduleDrop();
+        }
+    }
+
+    // The store's last-seen time moved while the panel stays open (a docked
+    // panel was looked at): move the "new" divider to it.
+    syncSeen() {
+        if (!this._open)
+            return;
+        this._heldLastSeen = this._store.lastSeen;
+        this.refresh();
+    }
+
+    _stopDayCheck() {
+        if (this._dayId) {
+            GLib.source_remove(this._dayId);
+            this._dayId = 0;
         }
     }
 
@@ -155,6 +185,7 @@ export class NotificationSection {
             return;
         this._destroyed = true;
         this._cancelPending();
+        this._stopDayCheck();
         if (this._dropId) {
             GLib.source_remove(this._dropId);
             this._dropId = 0;
@@ -230,6 +261,7 @@ export class NotificationSection {
         this._cancelPending();
         this._lastBuildUs = GLib.get_monotonic_time();
         try {
+            this._builtDay = dayKeyOf(this._now());
             const focusIndex = this._focusedRowIndex();
             const vm = buildView(this._view(), this._store.records, this._context());
 
@@ -319,7 +351,7 @@ export class NotificationSection {
             else
                 lookupApp(record.appId)?.activate();
         } finally {
-            this._closePanel();
+            this._dismissPanel();
         }
     }
 
@@ -329,7 +361,7 @@ export class NotificationSection {
         try {
             action.activate();
         } finally {
-            this._closePanel();
+            this._dismissPanel();
         }
     }
 

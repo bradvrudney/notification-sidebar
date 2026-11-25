@@ -8,6 +8,12 @@ const DEFAULT_LIMIT = 200;
 const local = time => GLib.DateTime.new_from_unix_local(time);
 const dayKey = dt => `${dt.get_year()}-${dt.get_month()}-${dt.get_day_of_month()}`;
 
+// Identifies the local calendar day `time` falls on. Day headings depend on
+// it, so a list left on screen is redrawn when this changes for "now".
+export function dayKeyOf(time) {
+    return dayKey(local(time));
+}
+
 function dayRelation(time, now) {
     const key = dayKey(local(time));
     const today = local(now);
